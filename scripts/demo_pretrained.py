@@ -38,7 +38,7 @@ def load_images(paths, target=518):
         w, h = img.size
         new_h = round(h * (target / w) / 14) * 14
         img = img.resize((target, new_h), Image.Resampling.BICUBIC)
-        x = torch.from_numpy(np.asarray(img)).permute(2, 0, 1).float() / 255
+        x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255
         if new_h > target:
             top = (new_h - target) // 2
             x = x[:, top:top + target]
