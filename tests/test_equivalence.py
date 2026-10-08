@@ -24,12 +24,16 @@ def _import_official():
     saved = {k: v for k, v in sys.modules.items() if k == "vggt" or k.startswith("vggt.")}
     for k in saved:
         del sys.modules[k]
-    sys.path.insert(0, OFFICIAL)
+    # The official package has no __init__.py (namespace package), so ours would shadow it:
+    # hide our repo root from sys.path while importing.
+    old_path = list(sys.path)
+    sys.path[:] = [OFFICIAL] + [p for p in sys.path if os.path.abspath(p or ".") != REPO_ROOT]
+    importlib.invalidate_caches()
     try:
         mod = importlib.import_module("vggt.models.vggt")
         official = {k: v for k, v in sys.modules.items() if k == "vggt" or k.startswith("vggt.")}
     finally:
-        sys.path.remove(OFFICIAL)
+        sys.path[:] = old_path
         for k in [k for k in sys.modules if k == "vggt" or k.startswith("vggt.")]:
             del sys.modules[k]
         sys.modules.update(saved)

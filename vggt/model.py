@@ -59,8 +59,8 @@ class VGGT(nn.Module):
         last = depth - 1
         cfg = dict(
             img_size=img_size, embed_dim=embed_dim, depth=depth, num_heads=num_heads, patch_embed="conv",
-            dpt_layers=(last // 4, last // 2, (3 * last) // 4, last), dpt_features=64,
-            dpt_out_channels=(48, 96, 192, 192), camera_trunk_depth=2, camera_num_heads=num_heads,
+            dpt_layers=(last // 4, last // 2, (3 * last) // 4, last), dpt_features=32,
+            dpt_out_channels=(32, 64, 128, 128), camera_trunk_depth=2, camera_num_heads=num_heads,
             grad_checkpoint=False,
         )
         cfg.update(kw)

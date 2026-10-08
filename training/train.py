@@ -36,7 +36,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--data", default="data/train.pt")
-    ap.add_argument("--num-scenes", type=int, default=4000)
+    ap.add_argument("--num-scenes", type=int, default=3000)
     ap.add_argument("--img-size", type=int, default=112)
     ap.add_argument("--embed-dim", type=int, default=192)
     ap.add_argument("--depth", type=int, default=6)

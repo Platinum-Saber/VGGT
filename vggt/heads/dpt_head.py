@@ -67,7 +67,10 @@ class ResidualConvUnit(nn.Module):
         self.conv2 = nn.Conv2d(features, features, 3, padding=1)
 
     def forward(self, x):
-        return self.conv2(F.relu(self.conv1(F.relu(x)))) + x
+        # The official code applies an in-place ReLU to x before the skip connection,
+        # so the skip effectively carries relu(x); the released weights depend on this.
+        x = F.relu(x)
+        return self.conv2(F.relu(self.conv1(x))) + x
 
 
 class FeatureFusionBlock(nn.Module):
