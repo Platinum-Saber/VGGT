@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--warmup", type=int, default=300)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--init", default=None, help="checkpoint to initialise the weights from (fine-tune / resume)")
     args = ap.parse_args()
 
     if args.threads:
@@ -62,6 +64,9 @@ def main():
 
     ds = MultiViewDataset(get_data(args.data, args.num_scenes, args.img_size, seed=1234), seed=args.seed)
     model = build_model(cfg)
+    if args.init:
+        model.load_state_dict(torch.load(args.init, map_location="cpu")["model"])
+    model.to(args.device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"params: {n_params / 1e6:.2f}M  aa_order={args.aa_order}", flush=True)
 
@@ -83,7 +88,7 @@ def main():
         for g in opt.param_groups:
             g["lr"] = lr_at(step)
         S = int(torch.randint(args.min_frames, args.max_frames + 1, (1,), generator=ds.gen))
-        batch = ds.batch(args.batch, S)
+        batch = {k: v.to(args.device) for k, v in ds.batch(args.batch, S).items()}
         preds = model(batch["images"])
         loss, logs = vggt_loss(preds, batch)
         opt.zero_grad(set_to_none=True)

@@ -67,7 +67,7 @@ def main():
     ds = MultiViewDataset(data)
     results = json.load(open(args.out)) if os.path.exists(args.out) else {}
     for run in args.runs:
-        ck = torch.load(os.path.join(run, "model.pt"))
+        ck = torch.load(os.path.join(run, "model.pt"), map_location="cpu")
         model = build_model(ck["cfg"])
         model.load_state_dict(ck["model"])
         for S in args.frames:
