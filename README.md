@@ -42,9 +42,35 @@ git clone https://github.com/facebookresearch/vggt /path/to/official
 VGGT_OFFICIAL=/path/to/official python -m pytest tests -q     # 2 passed
 ```
 
+### With the released VGGT-1B weights (Kaggle, Tesla T4)
+
+`notebooks/kaggle_pretrained_vggt.ipynb` loads `facebook/VGGT-1B` into both the official model and this
+implementation and runs them (fp32) on the 8 first images of the official `examples/kitchen` scene:
+
+```
+pose_enc           max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=1.36e+00
+depth              max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.57e+00
+depth_conf         max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.03e+01
+world_points       max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=2.86e+00
+world_points_conf  max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.16e+01
+```
+
+i.e. this implementation reproduces the released model's camera, depth and point-map predictions exactly.
+
+Inference with this implementation (T4, fp16 autocast, 518 px wide, aggregator + camera/depth/point heads;
+peak memory includes the ~4.7 GiB of fp32 weights; the 1-frame run includes GPU warm-up):
+
+| Frames | 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|
+| Time (s) | 0.76 | 0.59 | 1.05 | 2.21 | 5.56 | 15.68 |
+| Peak GPU memory (GiB) | 7.2 | 7.3 | 7.9 | 8.9 | 9.2 | 9.8 |
+
+Exporting the full 25-image kitchen scene with `scripts/demo_pretrained.py` produced 25 depth maps and a
+2.27 M-point cloud (depth + predicted cameras, top-50% confidence).
+
 ## Small-scale reproduction (CPU)
 
-The pretrained weights (Hugging Face) were not reachable from the sandbox used here, and it had no GPU (4 CPU cores).
+The pretrained weights (Hugging Face) were not reachable from the sandbox used for training, and it had no GPU (4 CPU cores).
 VGGT-1B was trained on 17 datasets with 64 A100s for 9 days, so the reproduction is necessarily small:
 
 - **Data** (`training/synthetic.py`): ray-cast indoor rooms with 3–6 spheres/boxes, solid (3D-consistent) textures,
