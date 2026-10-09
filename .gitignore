@@ -3,3 +3,7 @@ __pycache__/
 data/
 runs/*/model.pt
 runs/
+report/*.aux
+report/*.log
+report/*.toc
+report/*.out

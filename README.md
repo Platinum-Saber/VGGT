@@ -42,9 +42,35 @@ git clone https://github.com/facebookresearch/vggt /path/to/official
 VGGT_OFFICIAL=/path/to/official python -m pytest tests -q     # 2 passed
 ```
 
-## Small-scale reproduction (CPU)
+### With the released VGGT-1B weights (Kaggle, Tesla T4)
 
-The pretrained weights (Hugging Face) were not reachable from the sandbox used here, and it had no GPU (4 CPU cores).
+`notebooks/kaggle_pretrained_vggt.ipynb` loads `facebook/VGGT-1B` into both the official model and this
+implementation and runs them (fp32) on the 8 first images of the official `examples/kitchen` scene:
+
+```
+pose_enc           max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=1.36e+00
+depth              max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.57e+00
+depth_conf         max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.03e+01
+world_points       max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=2.86e+00
+world_points_conf  max|diff|=0.00e+00  mean|diff|=0.00e+00  max|ref|=3.16e+01
+```
+
+i.e. this implementation reproduces the released model's camera, depth and point-map predictions exactly.
+
+Inference with this implementation (T4, fp16 autocast, 518 px wide, aggregator + camera/depth/point heads;
+peak memory includes the ~4.7 GiB of fp32 weights; the 1-frame run includes GPU warm-up):
+
+| Frames | 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|
+| Time (s) | 0.76 | 0.59 | 1.05 | 2.21 | 5.56 | 15.68 |
+| Peak GPU memory (GiB) | 7.2 | 7.3 | 7.9 | 8.9 | 9.2 | 9.8 |
+
+Exporting the full 25-image kitchen scene with `scripts/demo_pretrained.py` produced 25 depth maps and a
+2.27 M-point cloud (depth + predicted cameras, top-50% confidence).
+
+## Small-scale reproduction (trained from scratch)
+
+The pretrained weights (Hugging Face) were not reachable from the sandbox used for training, and it had no GPU (4 CPU cores).
 VGGT-1B was trained on 17 datasets with 64 A100s for 9 days, so the reproduction is necessarily small:
 
 - **Data** (`training/synthetic.py`): ray-cast indoor rooms with 3–6 spheres/boxes, solid (3D-consistent) textures,
@@ -68,19 +94,42 @@ VGGT-1B was trained on 17 datasets with 64 A100s for 9 days, so the reproduction
 Point errors are in normalised scene units (mean point distance to origin = 1) after Sim(3) alignment.
 Full numbers for 2/4/6 frames are in `results/eval.json`, training logs in `results/train_log_*.jsonl`.
 
+### Longer training on a GPU (Kaggle T4, 15k steps)
+
+Same data, model, losses and test set; batch 16 instead of 8 and 15,000 steps instead of 3,000
+(10× more training samples), warm-up 1000 steps (`notebooks/kaggle_pretrained_vggt.ipynb`, Part 2).
+The SIFT baseline numbers are identical to the CPU run, confirming the same test set.
+
+| Method (4 frames) | AUC@30 ↑ | AUC@15 ↑ | AUC@5 ↑ | RRA@15 ↑ | RTA@15 ↑ | med. rot err ↓ | med. transl-dir err ↓ | failed pairs | Depth AbsRel ↓ | δ<1.25 ↑ | Point err (point head) ↓ | Point err (depth + cam) ↓ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| SIFT + 5-pt RANSAC (GT intrinsics) | 0.206 | **0.135** | **0.050** | 0.583 | 0.226 | 10.4° | 69.6° | 21.6 % | – | – | – | – |
+| VGGT-small, global attention only | 0.003 | 0.000 | 0.000 | 0.231 | 0.002 | 25.3° | 92.4° | 0 % | **0.087** | **0.937** | 0.110 | 0.212 |
+| VGGT-small, **Alternating-Attention** | **0.270** | 0.082 | 0.004 | **0.865** | **0.269** | **7.0°** | **23.6°** | 0 % | **0.087** | **0.937** | 0.099 | **0.096** |
+
+AA model at 2 / 4 / 6 frames: AUC@30 0.249 / 0.270 / 0.272, RRA@15 0.860 / 0.865 / 0.872 (more frames help slightly).
+Full numbers: `results/eval_long_kaggle.json`.
+
 ### What reproduces, and what does not
 
-1. **Alternating-Attention > global-only attention at equal parameter count** (paper Table 5) — reproduced for
-   camera pose: RRA@15 0.38 vs 0.23, translation-direction error 68° vs 92° (92° ≈ chance), AUC@30 0.042 vs 0.003,
-   consistently for 2, 4 and 6 frames. Depth is slightly better for global-only (AbsRel 0.218 vs 0.233), consistent with depth being largely a single-view cue.
-2. **Point maps from depth + camera beat the dedicated point head** (paper Table 3, "Ours (Depth + Cam)" vs
-   "Ours (Point)") — reproduced for the AA model at every frame count (0.235 vs 0.254 at 4 frames; 0.205 vs 0.227 at 2;
-   0.241 vs 0.259 at 6). For the global-only model, whose cameras are worse, the two are tied.
-3. **Feed-forward camera pose beating classical SfM** — *not* reproduced at this scale. After 3k CPU steps the
-   small model has learned depth/geometry well (δ<1.25 ≈ 0.85) but camera translation is still close to the
-   mean pose (rotations are partially learned). The same metrics on training scenes are equally poor,
-   i.e. this is **under-training, not over-fitting**; the camera loss was still decreasing at the end.
-   The paper's model uses DINOv2 pre-training, 160k steps, batch up to 24 frames × 64 GPUs.
+1. **Feed-forward camera pose beats classical two-view geometry on AUC@30** (paper Tables 1–2, at toy scale):
+   after 15k steps the AA model reaches AUC@30 0.270 vs 0.206 for SIFT + 5-point RANSAC, even though the baseline
+   is given the GT intrinsics. It has far lower median errors (rotation 7.0° vs 10.4°, translation direction 23.6° vs 69.6°)
+   and never fails, while SIFT fails on 22 % of pairs (wide baselines, low resolution, repetitive textures).
+   SIFT is still better at tight thresholds (AUC@5 0.050 vs 0.004): when it succeeds it is more precise, matching the
+   paper's observation that feed-forward predictions benefit from refinement (e.g. BA) for high accuracy.
+   This was *not* visible after 3k CPU steps (AUC@30 0.042): the camera head was under-trained, not over-fitting.
+2. **Alternating-Attention ≫ global-only attention at equal parameter count** (paper Table 5) — reproduced, and the
+   gap grows with training: global-only stays at chance for translation direction (≈ 92°) and ~25° rotation error at
+   both 3k and 15k steps, while AA improves to 23.6° / 7.0°. Depth quality is the same for both (AbsRel 0.087),
+   consistent with depth being largely a single-view cue; the difference is in cross-view reasoning.
+3. **Point maps from depth + camera beat the dedicated point head** (paper Table 3) — reproduced for the AA model at
+   every frame count and both training lengths (15k: 0.086 vs 0.089 at 2 frames, 0.096 vs 0.099 at 4, 0.098 vs 0.101
+   at 6; 3k: 0.235 vs 0.254 at 4 frames). The margin is small. For global-only, whose cameras are poor, depth + camera
+   is much worse (0.212 vs 0.110), as expected: the combination is only as good as the predicted cameras.
+
+Caveats: one seed per configuration, a synthetic domain, a 10.7 M-parameter model without DINOv2 pre-training,
+and a two-view classical baseline rather than full SfM (COLMAP / VGGSfM). The paper's model uses
+DINOv2 initialisation, 160k steps and up to 24 frames × 64 A100s.
 
 ## Running
 
@@ -105,6 +154,12 @@ python scripts/demo_pretrained.py --images path/to/*.jpg --out out/             
    and prints the output differences;
 2. times inference vs. number of frames;
 3. trains the AA and global-only small models for 30k steps (10× the CPU run) and evaluates them.
+
+## Report
+
+`report/vggt_report.pdf` (source `report/vggt_report.tex`, figures from `scripts/make_report_figures.py`) gives the full write-up:
+method, verification, all result tables and charts, a claim-by-claim comparison with the paper, limitations and conclusion.
+Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex`.
 
 ## Layout
 
