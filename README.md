@@ -155,6 +155,12 @@ python scripts/demo_pretrained.py --images path/to/*.jpg --out out/             
 2. times inference vs. number of frames;
 3. trains the AA and global-only small models for 30k steps (10× the CPU run) and evaluates them.
 
+## Report
+
+`report/vggt_report.pdf` (source `report/vggt_report.tex`, figures from `scripts/make_report_figures.py`) gives the full write-up:
+method, verification, all result tables and charts, a claim-by-claim comparison with the paper, limitations and conclusion.
+Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex`.
+
 ## Layout
 
 ```
