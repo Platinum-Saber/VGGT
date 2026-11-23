@@ -1,0 +1,11 @@
+torch
+torchvision
+numpy
+Pillow
+huggingface_hub
+einops
+safetensors
+# demo, track visualisation, evaluation and tests
+opencv-python-headless
+matplotlib
+pytest

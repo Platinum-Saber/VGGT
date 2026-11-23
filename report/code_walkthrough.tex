@@ -41,28 +41,28 @@
   \begin{tabular}{@{}>{\bfseries}p{1.7cm}p{\dimexpr\linewidth-1.7cm-2\tabcolsep\relax}@{}}}%
   {\end{tabular}\end{tcolorbox}}
 
-% Pipeline strip with one phase highlighted (1-7 inference, 8-12 training/evaluation)
+% Pipeline strip with one phase highlighted (1-8 network, 9-12 evaluation and tools)
 \newcommand{\strip}[1]{%
 \begin{center}
 \begin{tikzpicture}[font=\tiny, every node/.style={align=center}]
 \foreach \i/\t [count=\k] in {1/{Input \&\\patchify},2/{Token\\assembly},3/{Alternating\\Attention},4/{Camera\\head},
-  5/{Pose\\decoding},6/{DPT dense\\heads},7/{Depth+cam\\$\to$ points}} {
+  5/{Pose\\decoding},6/{DPT dense\\heads},7/{Depth+cam\\$\to$ points},8/{Track\\head}} {
   \ifnum\i=#1 \def\fillc{aa!45}\def\drawc{aa!80!black}\else\def\fillc{gray!8}\def\drawc{gray!50}\fi
-  \node[draw=\drawc, fill=\fillc, rounded corners=1.5pt, minimum width=16mm, minimum height=7mm, thick]
-    (s\i) at (\k*1.95,0) {\textbf{\i}\;\t};
-  \ifnum\i>1 \pgfmathtruncatemacro{\j}{\i-1}\draw[-{Stealth[length=1.2mm]}, gray] (s\j) -- (s\i);\fi
+  \node[draw=\drawc, fill=\fillc, rounded corners=1.5pt, minimum width=15mm, minimum height=7mm, thick]
+    (s\i) at (\k*1.85,0) {\textbf{\i}\;\t};
+  \ifnum\i>1 \ifnum\i<8 \pgfmathtruncatemacro{\j}{\i-1}\draw[-{Stealth[length=1.2mm]}, gray] (s\j) -- (s\i);\fi\fi
 }
-\foreach \i/\t [count=\k] in {8/{Synthetic\\data},9/{Loss},10/{Training\\loop},11/{Evaluation\\metrics},12/{SIFT\\baseline}} {
+\foreach \i/\t [count=\k] in {9/{GT test\\scenes},10/{Evaluation\\metrics},11/{SIFT\\baseline},12/{Demo \&\\3D viewer}} {
   \ifnum\i=#1 \def\fillc{tr!40}\def\drawc{tr!80!black}\else\def\fillc{gray!8}\def\drawc{gray!50}\fi
-  \node[draw=\drawc, fill=\fillc, rounded corners=1.5pt, minimum width=16mm, minimum height=7mm, thick]
-    (s\i) at (\k*1.95+1.95,-1.0) {\textbf{\i}\;\t};
+  \node[draw=\drawc, fill=\fillc, rounded corners=1.5pt, minimum width=15mm, minimum height=7mm, thick]
+    (s\i) at (\k*1.85+2.775,-1.0) {\textbf{\i}\;\t};
 }
 \end{tikzpicture}
 \end{center}}
 
 \title{\textbf{VGGT Code Walkthrough}\\[4pt]
 \large From images to cameras, depth and point maps: inputs, outputs, implementation\\
-and mathematics of every phase of the pipeline}
+and mathematics of every phase of the pipeline, including tracking}
 \author{Platinum-Saber/VGGT, code review notes}
 \date{November 2026}
 
@@ -70,12 +70,13 @@ and mathematics of every phase of the pipeline}
 \maketitle
 
 \begin{abstract}
-This document accompanies a code review of the repository's from-scratch re-implementation of VGGT
-(Visual Geometry Grounded Transformer, Wang et al., CVPR 2025). The architecture diagram is split into seven inference
-phases and five training/evaluation phases. For each phase we give the source location, the tensors that enter and leave it
-(with shapes for the released VGGT-1B configuration and for the 10.7\,M-parameter model trained in this project), how the code
-achieves the transformation, and the underlying mathematics or algorithm. Line numbers refer to the code on
-branch \texttt{claude/clever-curie-rl6bco}.
+This document accompanies a code review of the repository's re-implementation of VGGT (Visual Geometry Grounded
+Transformer, Wang et al., CVPR 2025). The package mirrors the original \texttt{facebookresearch/vggt} code: same module
+layout, names and parameter names, so the released VGGT-1B weights load unchanged and give bit-identical outputs. The
+architecture diagram is split into eight network phases (including the tracking head) and four evaluation and tooling
+phases. For each phase we give the source location, the tensors that enter and leave it (with shapes for VGGT-1B), how the
+code achieves the transformation, and the underlying mathematics or algorithm. Line numbers refer to the code on branch
+\texttt{claude/clever-curie-rl6bco}.
 \end{abstract}
 
 \tableofcontents
@@ -88,12 +89,13 @@ branch \texttt{claude/clever-curie-rl6bco}.
 
 VGGT is a single feed-forward network
 \[
-  f\big((I_i)_{i=1}^{S}\big) = \big(\mathbf{g}_i,\; D_i,\, \Sigma^D_i,\; P_i,\, \Sigma^P_i\big)_{i=1}^{S},
+  f\big((I_i)_{i=1}^{S}\big) = \big(\mathbf{g}_i,\; D_i,\, \Sigma^D_i,\; P_i,\, \Sigma^P_i,\; T_i\big)_{i=1}^{S},
 \]
 mapping $S$ RGB images of one scene to, per frame, a camera $\mathbf{g}_i$ (extrinsics and intrinsics), a depth map $D_i$,
-a point map $P_i$ expressed in the coordinate frame of the \emph{first} camera, and confidence maps for both. (The paper's
-tracking head is not part of this repository.) Figure~\ref{fig:arch} shows the architecture with the phase numbers used
-in the rest of this document; Table~\ref{tab:files} maps every phase to its source file.
+a point map $P_i$ expressed in the coordinate frame of the \emph{first} camera, confidence maps for both, and the positions
+$T_i$ of query points tracked from the first frame. Figure~\ref{fig:arch} shows the architecture with the phase numbers used
+in the rest of this document; Table~\ref{tab:files} maps every phase to its source file. The package layout is the official
+one: \texttt{vggt/models/}, \texttt{vggt/layers/}, \texttt{vggt/heads/} (with \texttt{track\_modules/}) and \texttt{vggt/utils/}.
 
 \begin{figure}[htbp]
 \centering
@@ -118,35 +120,37 @@ in the rest of this document; Table~\ref{tab:files} maps every phase to its sour
 \node[box=glob!10, minimum width=26mm, minimum height=13mm] (ga) at (9.4,-0.9) {global\\self-attention};
 \draw[arr] (fa) -- (ga);
 \node[draw, dashed, rounded corners, fit=(fa)(ga), inner sep=5pt, label={[lab]above:Alternating-Attention}] (aa) {};
-\node[lab] at (9.4,-2.3) {$\times L$ \; (RoPE, QK-norm, LayerScale)};
+\node[lab] at (9.2,-2.65) {$\times L$\\(RoPE, QK-norm, LayerScale)};
 \draw[arr] (tok) -- (aa.west |- tok);
-\node[box=aa!20, minimum width=30mm] (cam) at (17.0,1.6) {Camera head\\\scriptsize adaLN trunk, 4 refinement it.};
-\node[box=ok!15, minimum width=30mm] (dep) at (17.0,0) {DPT depth head\\\scriptsize $D_i$ + confidence $\Sigma^D_i$};
-\node[box=ok!15, minimum width=30mm] (pts) at (17.0,-1.6) {DPT point head\\\scriptsize $P_i$ + confidence $\Sigma^P_i$};
+\node[box=aa!20, minimum width=30mm] (cam) at (17.0,2.4) {Camera head\\\scriptsize adaLN trunk, 4 refinement it.};
+\node[box=ok!15, minimum width=30mm] (dep) at (17.0,0.8) {DPT depth head\\\scriptsize $D_i$ + confidence $\Sigma^D_i$};
+\node[box=ok!15, minimum width=30mm] (pts) at (17.0,-0.8) {DPT point head\\\scriptsize $P_i$ + confidence $\Sigma^P_i$};
+\node[box=orange!15, minimum width=30mm] (trk) at (17.0,-2.4) {Track head\\\scriptsize DPT features + tracker};
 \coordinate (aaout) at ($(aa.east)+(0.25,0)$);
 \draw[thick] (aa.east) -- (aaout);
-\draw[arr] (aaout) |- node[lab, pos=0.72, above] {camera tokens (last layer)} (cam.west);
-\draw[arr] (aaout) -- node[lab, above, pos=0.55] {patch tokens, 4 layers} (dep.west);
-\draw[arr] (aaout) |- node[lab, pos=0.72, below] {patch tokens, 4 layers} (pts.west);
+\draw[arr] (aaout) |- node[lab, pos=0.75, above] {camera tokens (last layer)} (cam.west);
+\draw[arr] (aaout) |- node[lab, pos=0.75, above] {patch tokens, 4 layers} (dep.west);
+\draw[arr] (aaout) |- (pts.west);
+\draw[arr] (aaout) |- node[lab, pos=0.75, below] {patch tokens, 4 layers} (trk.west);
 \node[box=gray!8, minimum width=24mm, right=12mm of cam] (dec) {pose decoding\\\scriptsize $\mathbf{g}\mapsto(K,[R|\mathbf{t}])$};
 \draw[arr] (cam) -- node[lab, above] {$\mathbf{g}_i\in\mathbb{R}^9$} (dec);
 \node[box=gray!8, minimum width=24mm, right=12mm of dep] (unp) {unprojection\\\scriptsize $D, K, [R|\mathbf{t}]\mapsto P$};
 \draw[arr] (dep) -- node[lab, above] {$D_i$} (unp);
 \draw[arr] (dec) -- (unp);
 \node[lab, right=3mm of pts] {$P_i\in\mathbb{R}^{H\times W\times 3}$};
-% phase numbers
+\node[lab, right=3mm of trk] {$T_i\in\mathbb{R}^{M\times 2}$, vis., conf.};
 \node[num] at ($(dino.north)+(0,0.35)$) {1};
 \node[num] at ($(tok.north)+(0,0.35)$) {2};
 \node[num] at ($(aa.north)+(0,0.75)$) {3};
 \node[num] at ($(cam.north)+(0,0.3)$) {4};
 \node[num] at ($(dec.north)+(0,0.3)$) {5};
-\node[num] at ($(pts.south)+(0,-0.3)$) {6};
 \node[num] at ($(dep.north west)+(0.3,0.3)$) {6};
 \node[num] at ($(unp.south)+(0,-0.3)$) {7};
+\node[num] at ($(trk.south)+(0,-0.3)$) {8};
 \end{tikzpicture}}
-\caption{Architecture as implemented, segmented into the inference phases 1--7 (black circles) discussed in
-Sections~\ref{sec:p1}--\ref{sec:p7}. Phases 8--12 (data, loss, training loop, evaluation, classical baseline) wrap around this
-network and are covered in Sections~\ref{sec:p8}--\ref{sec:p12}.}
+\caption{Architecture as implemented, segmented into the network phases 1--8 (black circles) discussed in
+Sections~\ref{sec:p1}--\ref{sec:p8}. Phases 9--12 (ground-truth test scenes, metrics, classical baseline, demo and 3D viewer)
+use the network and are covered in Sections~\ref{sec:p9}--\ref{sec:p12}.}
 \label{fig:arch}
 \end{figure}
 
@@ -155,75 +159,75 @@ network and are covered in Sections~\ref{sec:p8}--\ref{sec:p12}.}
 \caption{Phase-to-code map.}
 \label{tab:files}
 \footnotesize
-\begin{tabular}{c>{\raggedright}p{3.4cm}>{\raggedright}p{6.2cm}>{\raggedright\arraybackslash}p{4.4cm}}
+\begin{tabular}{c>{\raggedright}p{3.2cm}>{\raggedright}p{6.6cm}>{\raggedright\arraybackslash}p{4.2cm}}
 \toprule
 & Phase & Main code & Entry point \\
 \midrule
-1 & Input normalisation, patchify & \src{vggt/aggregator.py:85--87}, \src{vggt/dino.py}, \src{vggt/layers.py:131} & \texttt{Aggregator.forward} \\
-2 & Token assembly, positions & \src{vggt/aggregator.py:90--100, 123--127}, \src{layers.py:38} & \texttt{Aggregator.forward} \\
-3 & Alternating-Attention & \src{vggt/aggregator.py:102--120}, \src{vggt/layers.py:53--128} & \texttt{Aggregator.forward} \\
-4 & Camera head & \src{vggt/heads/camera\_head.py} & \texttt{CameraHead.forward} \\
-5 & Pose decoding & \src{vggt/utils/pose\_enc.py}, \src{vggt/utils/rotation.py} & \texttt{pose\_encoding\_to\_\allowbreak extri\_intri} \\
-6 & DPT dense heads & \src{vggt/heads/dpt\_head.py} & \texttt{DPTHead.forward} \\
-7 & Depth + camera $\to$ points & \src{vggt/utils/geometry.py} & \texttt{unproject\_depth\_to\_world} \\
+1 & Input normalisation, patchify & \src{models/aggregator.py:133--137}, \src{layers/vision\_transformer.py}, \src{layers/patch\_embed.py} & \texttt{Aggregator.forward} \\
+2 & Token assembly, positions & \src{models/aggregator.py:139--150, 208--213}, \src{layers/rope.py:15--27} & \texttt{Aggregator.forward} \\
+3 & Alternating-Attention & \src{models/aggregator.py:152--206}, \src{layers/block.py}, \src{layers/attention.py}, \src{layers/rope.py} & \texttt{Aggregator.forward} \\
+4 & Camera head & \src{heads/camera\_head.py}, \src{heads/head\_act.py} & \texttt{CameraHead.forward} \\
+5 & Pose decoding & \src{utils/pose\_enc.py}, \src{utils/rotation.py} & \texttt{pose\_encoding\_to\_\allowbreak extri\_intri} \\
+6 & DPT dense heads & \src{heads/dpt\_head.py}, \src{heads/utils.py}, \src{heads/head\_act.py} & \texttt{DPTHead.forward} \\
+7 & Depth + camera $\to$ points & \src{utils/geometry.py:11--69} & \texttt{unproject\_depth\_map\_\allowbreak to\_point\_map} \\
+8 & Track head & \src{heads/track\_head.py}, \src{heads/track\_modules/} & \texttt{TrackHead.forward} \\
 \midrule
-8 & Synthetic data & \src{training/synthetic.py} & \texttt{SceneSampler}, \texttt{MultiViewDataset} \\
-9 & Loss & \src{training/losses.py} & \texttt{vggt\_loss} \\
-10 & Training loop & \src{training/train.py} & \texttt{main} \\
-11 & Evaluation metrics & \src{training/metrics.py}, \src{training/evaluate.py} & \texttt{evaluate} \\
-12 & SIFT baseline & \src{training/baseline\_sift.py} & \texttt{rel\_pose} \\
+9 & Ground-truth test scenes & \src{evaluation/synthetic.py} & \texttt{generate\_dataset} \\
+10 & Evaluation metrics & \src{evaluation/metrics.py}, \src{evaluation/evaluate\_pretrained.py} & \texttt{evaluate} \\
+11 & SIFT baseline & \src{evaluation/baseline\_sift.py} & \texttt{evaluate\_sift} \\
+12 & Demo and 3D viewer & \src{demo\_pretrained.py}, \src{scripts/export\_viewer.py} & \texttt{main}, \texttt{write\_viewer} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Top-level forward pass}
 
-\src{vggt/model.py:69--83} wires the phases together. The aggregator returns a list of per-layer token tensors; each head reads
-what it needs from that list.
+\src{vggt/models/vggt.py:30--73} wires the phases together. The aggregator returns a list of per-layer token tensors; each
+head reads what it needs from that list. The camera, depth and point heads always run in fp32, even when the caller uses
+mixed precision; the track head runs only when query points are given.
 
-\begin{lstlisting}[firstnumber=69]
-def forward(self, images, num_camera_iterations=4):
-    if images.dim() == 4:
-        images = images[None]                       # (S,3,H,W) -> (1,S,3,H,W)
-    tokens, patch_start_idx = self.aggregator(images)                       # phases 1-3
-    preds = {}
-    if self.camera_head is not None:                                         # phase 4
-        pose_enc_list = self.camera_head(tokens, num_iterations=num_camera_iterations)
-        preds["pose_enc"] = pose_enc_list[-1]
-        preds["pose_enc_list"] = pose_enc_list
-    if self.depth_head is not None:                                          # phase 6
-        preds["depth"], preds["depth_conf"] = self.depth_head(tokens, images, patch_start_idx)
-    if self.point_head is not None:
-        preds["world_points"], preds["world_points_conf"] = self.point_head(tokens, images, patch_start_idx)
-    return preds
+\begin{lstlisting}[firstnumber=44]
+        aggregated_tokens_list, patch_start_idx = self.aggregator(images)            # phases 1-3
+        predictions = {}
+        # The heads always run in fp32, also when the caller uses mixed precision.
+        with torch.cuda.amp.autocast(enabled=False):
+            if self.camera_head is not None:                                         # phase 4
+                pose_enc_list = self.camera_head(aggregated_tokens_list)
+                predictions["pose_enc"] = pose_enc_list[-1]
+                predictions["pose_enc_list"] = pose_enc_list
+            if self.depth_head is not None:                                          # phase 6
+                depth, depth_conf = self.depth_head(aggregated_tokens_list, images=images,
+                                                    patch_start_idx=patch_start_idx)
+            ...                                                                      # point head likewise
+        if self.track_head is not None and query_points is not None:                 # phase 8
+            track_list, vis, conf = self.track_head(aggregated_tokens_list, images=images,
+                                                    patch_start_idx=patch_start_idx, query_points=query_points)
+            predictions["track"] = track_list[-1]
 \end{lstlisting}
 
-\subsection{Notation and the two configurations}
+\subsection{Notation and configuration}
 
 $B$ batch size, $S$ frames per scene, $H\times W$ image size, $p=14$ patch size, $h=H/p$, $w=W/p$, $K=hw$ patches per frame,
-$P = 1 + 4 + K$ tokens per frame (camera, 4 registers, patches), $C$ token width, $L$ aggregator depth.
-\texttt{VGGT()} with default arguments is the released VGGT-1B; \texttt{VGGT.small()} (\src{model.py:56--67}) is the
-model trained in this project.
+$P = 1 + 4 + K$ tokens per frame (camera, 4 registers, patches), $C$ token width, $L$ aggregator depth, $M$ query points.
+\texttt{VGGT()} with default arguments is the released VGGT-1B (Table~\ref{tab:configs}).
 
 \begin{table}[htbp]
 \centering
-\caption{Configurations and the resulting token shapes (square inputs).}
+\caption{VGGT-1B configuration and the resulting token shapes ($518\times518$ input).}
 \label{tab:configs}
 \small
-\begin{tabular}{lcc}
+\begin{tabular}{l>{\raggedright\arraybackslash}p{9.2cm}}
 \toprule
- & VGGT-1B (\texttt{VGGT()}) & small (\texttt{VGGT.small()}) \\
-\midrule
-Input $H\times W$ & $518\times518$ & $112\times112$ \\
-Patchifier & DINOv2 ViT-L/14 + 4 registers & single $14\times14$ conv \\
-Patch grid $h\times w$, $K$ & $37\times37$, 1369 & $8\times8$, 64 \\
-Tokens per frame $P$ & 1374 & 69 \\
-Width $C$ / heads / head dim & 1024 / 16 / 64 & 192 / 6 / 32 \\
-AA depth $L$ & 24 (frame + global) & 6 + 6 (AA) or 12 global (ablation) \\
-Layers read by DPT & $\{4, 11, 17, 23\}$ & $\{1, 2, 3, 5\}$ \\
-DPT channels (features) & $(256, 512, 1024, 1024)$ (256) & $(32, 64, 128, 128)$ (32) \\
-Camera trunk & 4 blocks, 16 heads & 2 blocks, 6 heads \\
-Parameters & $\approx$1.18\,B (no tracking head) & 10.66\,M \\
+Input $H\times W$ & $518\times518$ (\texttt{load\_and\_preprocess\_images}: width 518, height a multiple of 14) \\
+Patchifier & DINOv2 ViT-L/14 with 4 registers (24 blocks) \\
+Patch grid $h\times w$, $K$; tokens per frame $P$ & $37\times37$, 1369; 1374 \\
+Width $C$ / heads / head dim & 1024 / 16 / 64 \\
+Aggregator & $L=24$ frame blocks + 24 global blocks \\
+Layers read by the DPT heads & $\{4, 11, 17, 23\}$ \\
+DPT channels (features) & $(256, 512, 1024, 1024)$ (256); track features 128 at $H/2$ \\
+Camera trunk & 4 blocks, 16 heads \\
+Tracker & 7-level correlation pyramid, radius 4, 6+6 update-transformer blocks, 4 iterations \\
+Parameters & 1{,}256{,}537{,}516 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -232,27 +236,24 @@ Table~\ref{tab:trace} traces the tensor shapes through one forward pass; the fol
 
 \begin{table}[htbp]
 \centering
-\caption{Tensor shapes through one forward pass for VGGT-1B with $B=1$, $S=4$, $518\times518$ inputs (small model in brackets,
-$112\times112$).}
+\caption{Tensor shapes through one forward pass of VGGT-1B with $B=1$, $S=4$, $518\times518$ inputs, $M=100$ query points.}
 \label{tab:trace}
 \small
-\begin{tabular}{clll}
+\begin{tabular}{c>{\raggedright}p{6.2cm}>{\raggedright\arraybackslash}p{7.4cm}}
 \toprule
-Phase & Tensor & VGGT-1B & [small] \\
+Phase & Tensor & Shape \\
 \midrule
-1 & input images & $(1,4,3,518,518)$ & $[(1,4,3,112,112)]$ \\
-1 & patch tokens & $(4,1369,1024)$ & $[(4,64,192)]$ \\
-2 & tokens + specials & $(4,1374,1024)$ & $[(4,69,192)]$ \\
-3 & frame-attention sequence & $(4,1374,1024)$ & $[(4,69,192)]$ \\
-3 & global-attention sequence & $(1,5496,1024)$ & $[(1,276,192)]$ \\
-3 & stored layer output & $(1,4,1374,2048)$ & $[(1,4,69,384)]$ \\
-4 & camera tokens & $(1,4,2048)$ & $[(1,4,384)]$ \\
-4 & pose encodings & $4\times(1,4,9)$ & $[4\times(1,4,9)]$ \\
-5 & extrinsics / intrinsics & $(1,4,3,4)$ / $(1,4,3,3)$ & same \\
-6 & DPT pyramid & $148^2, 74^2, 37^2, 19^2$ & $[32^2, 16^2, 8^2, 4^2]$ \\
-6 & depth, depth conf. & $(1,4,518,518,1)$, $(1,4,518,518)$ & $[(1,4,112,112,1)]$ \\
-6 & points, points conf. & $(1,4,518,518,3)$, $(1,4,518,518)$ & $[(1,4,112,112,3)]$ \\
-7 & unprojected points & $(4,518,518,3)$ & $[(4,112,112,3)]$ \\
+1 & input images & $(1,4,3,518,518)$ \\
+1 & patch tokens & $(4,1369,1024)$ \\
+2 & tokens + specials & $(4,1374,1024)$ \\
+3 & frame-attention sequence / global-attention sequence & $(4,1374,1024)$ / $(1,5496,1024)$ \\
+3 & stored layer output & $(1,4,1374,2048)$ \\
+4 & camera tokens; pose encodings & $(1,4,2048)$; $4\times(1,4,9)$ \\
+5 & extrinsics / intrinsics & $(1,4,3,4)$ / $(1,4,3,3)$ \\
+6 & DPT pyramid & $148^2, 74^2, 37^2, 19^2$ \\
+6 & depth, depth conf.; points, points conf. & $(1,4,518,518,1)$, $(1,4,518,518)$; $(1,4,518,518,3)$, $(1,4,518,518)$ \\
+7 & unprojected points & $(4,518,518,3)$ \\
+8 & track features; tracks, visibility, confidence & $(1,4,128,259,259)$; $(1,4,100,2)$, $(1,4,100)$, $(1,4,100)$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -262,7 +263,7 @@ Phase & Tensor & VGGT-1B & [small] \\
 \strip{1}
 
 \begin{card}{Phase 1 at a glance}
-Code & \src{aggregator.py:85--87}; \src{dino.py:25--75} (VGGT-1B); \src{layers.py:131--141} (small) \\
+Code & \src{models/aggregator.py:133--137}; \src{layers/vision\_transformer.py} (DINOv2); \src{layers/patch\_embed.py} \\
 Input & images $\in[0,1]^{B\times S\times 3\times H\times W}$, $H, W$ multiples of 14 \\
 Output & patch tokens $\in\mathbb{R}^{(B S)\times K\times C}$ \\
 How & per-channel ImageNet normalisation, frames folded into the batch axis, then a ViT patchifier \\
@@ -270,7 +271,7 @@ How & per-channel ImageNet normalisation, frames folded into the batch axis, the
 
 \paragraph{Normalisation.} Every pixel is standardised with the ImageNet statistics used to pre-train DINOv2,
 $\tilde{x}_c = (x_c - \mu_c)/\sigma_c$, $\bm\mu = (0.485, 0.456, 0.406)$, $\bm\sigma = (0.229, 0.224, 0.225)$, stored as
-non-persistent buffers so they are not part of the checkpoint (\src{aggregator.py:75--76}). The $S$ frames are then reshaped into
+non-persistent buffers so they are not part of the checkpoint (\src{models/aggregator.py:98--99}). The $S$ frames are then reshaped into
 the batch axis, $(B,S,3,H,W)\to(BS,3,H,W)$: the patchifier sees each frame independently.
 
 \paragraph{Patch embedding.} A convolution with kernel size $=$ stride $=p$ is exactly a shared linear map applied to
@@ -280,16 +281,17 @@ each non-overlapping $p\times p$ patch:
   W_{\text{pe}}\in\mathbb{R}^{C\times 3p^2},\; k=1,\dots,K .
 \]
 \texttt{PatchEmbed} implements this as \texttt{Conv2d(3, C, p, stride=p)} followed by \texttt{flatten(2).transpose(1,2)}.
-The small model stops here.
+With \texttt{patch\_embed="conv"} the aggregator uses only this layer; VGGT-1B wraps it in DINOv2.
 
-\paragraph{DINOv2 (VGGT-1B).} \texttt{DinoVisionTransformer.forward} (\src{dino.py:66--75}) reproduces DINOv2-with-registers:
+\paragraph{DINOv2 (VGGT-1B).} The DINOv2 forward pass (\texttt{forward\_features},
+\src{layers/vision\_transformer.py:149--185}) returns a dictionary, of which the aggregator keeps \texttt{x\_norm\_patchtokens}:
 \begin{enumerate}[nosep]
   \item patch-embed as above, prepend a learned \texttt{cls} token;
   \item add learned absolute position embeddings. They were trained on a $37\times37$ grid; for other grids the patch part is
-        resampled with bicubic, anti-aliased interpolation (\texttt{interpolate\_pos\_encoding}, \src{dino.py:51--64});
+        resampled with bicubic, anti-aliased interpolation (\texttt{interpolate\_pos\_encoding}, \src{layers/vision\_transformer.py:125--147});
   \item insert 4 register tokens after \texttt{cls} (registers absorb the high-norm ``artefact'' activations of plain ViTs);
   \item 24 pre-norm transformer blocks (Phase~3 block, without RoPE/QK-norm), final LayerNorm;
-  \item return only the $K$ normalised patch tokens, \texttt{x[:, 1 + num\_register\_tokens:]}.
+  \item the normalised patch tokens are \texttt{x\_norm[:, 1 + num\_register\_tokens:]}.
 \end{enumerate}
 The \texttt{cls} and DINO register outputs are discarded; VGGT adds its own special tokens in Phase~2.
 
@@ -298,8 +300,8 @@ The \texttt{cls} and DINO register outputs are discarded; VGGT adds its own spec
 \strip{2}
 
 \begin{card}{Phase 2 at a glance}
-Code & \src{aggregator.py:70--73} (parameters), \src{aggregator.py:90--100}, \texttt{\_first\_vs\_rest} (\src{123--127}),
-\texttt{PositionGetter} (\src{layers.py:38--50}) \\
+Code & \src{models/aggregator.py:92--96} (parameters), \src{139--150}, \texttt{slice\_expand\_and\_flatten} (\src{208--213}),
+\texttt{PositionGetter} (\src{layers/rope.py:15--27}) \\
 Input & patch tokens $(BS, K, C)$ \\
 Output & tokens $(BS, P, C)$ with $P=1+4+K$; integer positions $(BS, P, 2)$; \texttt{patch\_start\_idx} $=5$ \\
 How & prepend 1 camera and 4 register tokens per frame, chosen from two learned sets (reference frame vs.\ others) \\
@@ -308,12 +310,13 @@ How & prepend 1 camera and 4 register tokens per frame, chosen from two learned 
 \paragraph{Reference-frame tokens.} The camera token has shape $(1,2,1,C)$ and the register tokens $(1,2,4,C)$. Slot 0 is used
 for frame 1, slot 1 for every other frame:
 
-\begin{lstlisting}[firstnumber=123]
-def _first_vs_rest(token, B, S):
+\begin{lstlisting}[firstnumber=208]
+def slice_expand_and_flatten(token_tensor, B, S):
     """(1, 2, X, C) -> (B*S, X, C): slot 0 for frame 0, slot 1 for frames 1..S-1."""
-    first = token[:, :1].expand(B, 1, *token.shape[2:])
-    rest = token[:, 1:].expand(B, S - 1, *token.shape[2:])
-    return torch.cat([first, rest], dim=1).reshape(B * S, *token.shape[2:])
+    first = token_tensor[:, 0:1, ...].expand(B, 1, *token_tensor.shape[2:])
+    others = token_tensor[:, 1:, ...].expand(B, S - 1, *token_tensor.shape[2:])
+    combined = torch.cat([first, others], dim=1)
+    return combined.view(B * S, *combined.shape[2:])
 \end{lstlisting}
 
 This is the only place where frame order matters. Because the outputs are expressed in the first camera's coordinate system, the
@@ -333,8 +336,8 @@ coordinates, so the same pixel location in two different frames has the same pos
 \strip{3}
 
 \begin{card}{Phase 3 at a glance}
-Code & \src{aggregator.py:102--120} (loop), \src{layers.py:113--128} (\texttt{Block}), \src{90--110} (\texttt{Attention}),
-\src{53--87} (\texttt{RotaryPositionEmbedding2D}) \\
+Code & \src{models/aggregator.py:152--206} (loop and the two attention types), \src{layers/block.py:14--69} (\texttt{Block}),
+\src{layers/attention.py:7--48}, \src{layers/rope.py:30--66} (\texttt{RotaryPositionEmbedding2D}) \\
 Input & tokens $(BS, P, C)$, positions $(BS, P, 2)$ \\
 Output & list of $L$ entries; entry $i$ is $(B, S, P, 2C)$ $=[\text{frame output}\,\|\,\text{global output}]$ for layers
 read by a head, otherwise \texttt{None}; plus \texttt{patch\_start\_idx} \\
@@ -344,33 +347,37 @@ implemented purely by reshaping the token tensor \\
 
 \subsection{The alternating loop}
 
-\begin{lstlisting}[firstnumber=103]
-for i in range(self.depth):
-    inter = []
-    for attn_type in self.aa_order:
-        if attn_type == "frame":   # attention within each frame: (B*S, P, C)
-            tokens = self._run(self.frame_blocks[i], tokens.reshape(B * S, P, C),
-                               None if pos is None else pos.reshape(B * S, P, 2))
-        elif attn_type == "global":  # attention across all frames: (B, S*P, C)
-            tokens = self._run(self.global_blocks[i], tokens.reshape(B, S * P, C),
-                               None if pos is None else pos.reshape(B, S * P, 2))
-        inter.append(tokens.reshape(B, S, P, C))
-    if self.cached_layer_indices is None or i in self.cached_layer_indices:
-        outputs.append(torch.cat(inter if len(inter) == 2 else inter * 2, dim=-1))
-    else:
-        outputs.append(None)
+\begin{lstlisting}[firstnumber=152]
+        _, P, C = tokens.shape
+        frame_idx = global_idx = 0
+        output_list = []
+        for _ in range(self.aa_block_num):                 # depth / aa_block_size steps
+            for attn_type in self.aa_order:                # ["frame", "global"]
+                if attn_type == "frame":
+                    tokens, frame_idx, frame_intermediates = self._process_frame_attention(
+                        tokens, B, S, P, C, frame_idx, pos=pos)
+                elif attn_type == "global":
+                    tokens, global_idx, global_intermediates = self._process_global_attention(
+                        tokens, B, S, P, C, global_idx, pos=pos)
+            for i in range(len(frame_intermediates)):
+                layer_idx = len(output_list)
+                if layer_idx in self.cached_layer_indices:
+                    output_list.append(torch.cat([frame_intermediates[i], global_intermediates[i]], dim=-1))
+                else:
+                    output_list.append(None)
 \end{lstlisting}
 
-The two attention types are the same \texttt{Block}; they differ only in the sequence the attention sees:
+\texttt{\_process\_frame\_attention} views the tokens as $(BS, P, C)$ and \texttt{\_process\_global\_attention} as $(B, SP, C)$;
+both then run \texttt{aa\_block\_size} (1 for VGGT-1B) blocks of their type. The two attention types use the same
+\texttt{Block} class; they differ only in the sequence the attention sees:
 \begin{itemize}[nosep]
   \item \textbf{frame-wise}: $(BS, P, C)$, each sequence is one image. Cost $\propto B\,S\,P^2 C$.
   \item \textbf{global}: $(B, SP, C)$, one sequence holds all tokens of all frames. Cost $\propto B\,(SP)^2 C$, which is
         what makes inference time grow super-linearly with $S$ (for VGGT-1B with $S=8$ the global sequence has 10\,992 tokens).
 \end{itemize}
-Only layers that some head reads are kept (\texttt{cached\_layer\_indices} plus the last layer), saving memory.
-For the global-only ablation (\texttt{aa\_order=("global",)}) there is one output per layer, duplicated so the heads still
-receive $2C$ channels; the model then has $2L$ global blocks if built with \texttt{depth=2L}, matching the AA parameter count.
-During training each block can be wrapped in activation checkpointing (\texttt{\_run}, \src{aggregator.py:78--81}).
+Only layers that some head reads are kept (\texttt{cached\_layer\_indices} plus the last layer), saving memory; the others
+are \texttt{None} so layer indices stay stable. In training mode every block is wrapped in activation checkpointing
+(\texttt{\_run\_block}, \src{models/aggregator.py:176--179}).
 
 \begin{algorithm}[htbp]
 \caption{Alternating-Attention aggregator}
@@ -389,15 +396,16 @@ During training each block can be wrapped in activation checkpointing (\texttt{\
 
 \subsection{Transformer block}
 
-Each block is a pre-norm ViT block with LayerScale (\src{layers.py:126--128}):
+Each block is a pre-norm ViT block with LayerScale (\src{layers/block.py:49--69}):
 \[
   X \leftarrow X + \bm\gamma_1 \odot \operatorname{Attn}\!\big(\operatorname{LN}_1(X)\big),\qquad
   X \leftarrow X + \bm\gamma_2 \odot \operatorname{MLP}\!\big(\operatorname{LN}_2(X)\big),
 \]
 with $\operatorname{MLP}(x) = W_2\,\operatorname{GELU}(W_1 x)$, hidden width $4C$, and LayerScale vectors
-$\bm\gamma_{1,2}$ initialised to $0.01$ so each block starts close to the identity.
+$\bm\gamma_{1,2}$ initialised to $0.01$ so each block starts close to the identity. Drop path (stochastic depth) is
+supported for training and is off (rate 0) in VGGT.
 
-\paragraph{Multi-head attention with QK-norm and RoPE.} For $n_h$ heads of width $d=C/n_h$ (\src{layers.py:103--110}):
+\paragraph{Multi-head attention with QK-norm and RoPE.} For $n_h$ heads of width $d=C/n_h$ (\src{layers/attention.py:35--48}):
 \begin{gather*}
   [Q,K,V] = X W_{qkv},\qquad \hat{Q} = \mathcal{R}_{\Pi}\big(\operatorname{LN}(Q)\big),\qquad
   \hat{K} = \mathcal{R}_{\Pi}\big(\operatorname{LN}(K)\big),\\
@@ -407,7 +415,7 @@ computed per head with \texttt{F.scaled\_dot\_product\_attention}. The LayerNorm
 (QK-norm) bounds the attention logits and stabilises training at large scale.
 
 \paragraph{2D rotary position embedding.} $\mathcal{R}_\Pi$ rotates the first half of each head's channels by the row index
-$y$ and the second half by the column index $x$ (\src{layers.py:80--87}). For one axis with $d' = d/2$ channels and integer
+$y$ and the second half by the column index $x$ (\src{layers/rope.py:57--66}). For one axis with $d' = d/2$ channels and integer
 position $m$, the code uses the ``rotate-half'' form with frequencies $\theta_j = b^{-2j/d'}$, $b = 100$,
 $j = 0,\dots,d'/2-1$, and $\bm\Theta = [\bm\theta, \bm\theta]$:
 \[
@@ -429,7 +437,7 @@ tables are cached per (dimension, length, device, dtype).
 \strip{4}
 
 \begin{card}{Phase 4 at a glance}
-Code & \src{vggt/heads/camera\_head.py:16--44} \\
+Code & \src{heads/camera\_head.py:16--80}; activations \src{heads/head\_act.py:7--24} \\
 Input & last aggregator layer, camera token only: $Z_{L-1}[:,:,0] \in \mathbb{R}^{B\times S\times 2C}$ \\
 Output & list of 4 pose encodings $\hat{\mathbf{g}}^{(1)},\dots,\hat{\mathbf{g}}^{(4)} \in \mathbb{R}^{B\times S\times 9}$
 (the last is the prediction; all are supervised) \\
@@ -437,17 +445,22 @@ How & iterative residual refinement: the current estimate modulates the camera t
 transformer trunk mixes information across frames, an MLP outputs an update \\
 \end{card}
 
-\begin{lstlisting}[firstnumber=32]
-tokens = self.token_norm(aggregated_tokens_list[-1][:, :, 0])  # (B, S, 2C) camera tokens
-B, S, _ = tokens.shape
-pred, preds = None, []
-for _ in range(num_iterations):
-    inp = self.embed_pose(self.empty_pose_tokens.expand(B, S, -1) if pred is None else pred.detach())
-    shift, scale, gate = self.poseLN_modulation(inp).chunk(3, dim=-1)
-    x = gate * (self.adaln_norm(tokens) * (1 + scale) + shift) + tokens
-    delta = self.pose_branch(self.trunk_norm(self.trunk(x)))
-    pred = delta if pred is None else pred + delta
-    preds.append(torch.cat([pred[..., :7], F.relu(pred[..., 7:])], -1))
+\begin{lstlisting}[firstnumber=57]
+        B, S, C = pose_tokens.shape                       # pose_tokens = token_norm(last layer[:, :, 0])
+        pred_pose_enc = None
+        pred_pose_enc_list = []
+        for _ in range(num_iterations):
+            if pred_pose_enc is None:
+                module_input = self.embed_pose(self.empty_pose_tokens.expand(B, S, -1))
+            else:
+                pred_pose_enc = pred_pose_enc.detach()   # no gradient through the conditioning
+                module_input = self.embed_pose(pred_pose_enc)
+            shift, scale, gate = self.poseLN_modulation(module_input).chunk(3, dim=-1)
+            x = gate * modulate(self.adaln_norm(pose_tokens), shift, scale) + pose_tokens
+            x = self.trunk(x)
+            delta = self.pose_branch(self.trunk_norm(x))
+            pred_pose_enc = delta if pred_pose_enc is None else pred_pose_enc + delta
+            pred_pose_enc_list.append(activate_pose(pred_pose_enc, trans_act=self.trans_act, ...))
 \end{lstlisting}
 
 \paragraph{Mathematics.} Let $\mathbf{z}_i = \operatorname{LN}(\mathbf{c}_i)$ be the normalised camera token of frame $i$ and
@@ -461,11 +474,12 @@ $\mathbf{g}^{(0)}$ a learned ``empty'' pose vector. For $k = 1,\dots,4$:
   \hat{\mathbf{g}}_i^{(k)} &= \big[\mathbf{g}^{(k)}_{i,1:7},\ \operatorname{ReLU}(\mathbf{g}^{(k)}_{i,8:9})\big],
 \end{align*}
 where $\operatorname{sg}$ is stop-gradient (\texttt{detach}), $\operatorname{LN}_0$ is a LayerNorm without affine parameters
-(adaLN, as in DiT), and $\mathbf{g}^{(1)}$ is the first update itself. The trunk (4 or 2 \texttt{Block}s, no RoPE) attends
+(adaLN, as in DiT), and $\mathbf{g}^{(1)}$ is the first update itself. The trunk (4 \texttt{Block}s, no RoPE) attends
 over the $S$ camera tokens, so each frame's update is conditioned on all other frames. The same trunk weights are reused in
 every iteration. Stopping the gradient through the conditioning means each iteration learns ``given this estimate, how should
 it change'', while gradients still reach earlier updates through the additive path $\mathbf{g}^{(k)}=\mathbf{g}^{(k-1)}+\Delta$.
-The ReLU keeps the field of view non-negative.
+\texttt{activate\_pose} applies the configured activations: linear for translation and quaternion, ReLU for the field of
+view (keeps it non-negative).
 
 %==========================================================================================
 \section{Phase 5: Pose encoding and decoding}\label{sec:p5}
@@ -475,7 +489,7 @@ The ReLU keeps the field of view non-negative.
 Code & \src{vggt/utils/pose\_enc.py}, \src{vggt/utils/rotation.py} \\
 Input & $\hat{\mathbf{g}} \in \mathbb{R}^{\dots\times 9}$ and the image size $(H,W)$ \\
 Output & extrinsics $[R\,|\,\mathbf{t}] \in \mathbb{R}^{\dots\times3\times4}$ (OpenCV camera-from-world) and intrinsics
-$K\in\mathbb{R}^{\dots\times3\times3}$; the inverse map builds training targets \\
+$K\in\mathbb{R}^{\dots\times3\times3}$; the inverse map turns ground-truth cameras into encodings \\
 How & closed-form conversions: translation copied, quaternion $\leftrightarrow$ rotation matrix, field of view
 $\leftrightarrow$ focal length \\
 \end{card}
@@ -501,18 +515,20 @@ unit quaternion $(i,j,k,r)$ with $s = 2/\|\mathbf{q}\|^2$:
 \]
 which equals the rotation of $\mathbf{q}/\|\mathbf{q}\|$, so the network output need not be normalised.
 
-\paragraph{Matrix to quaternion} (\texttt{mat\_to\_quat}, used to build targets) follows Shepperd's method: compute the four
+\paragraph{Matrix to quaternion} (\texttt{mat\_to\_quat}, used to encode ground-truth cameras) follows Shepperd's method: compute the four
 candidates $|q_r|, |q_i|, |q_j|, |q_k|$ from $\sqrt{1\pm m_{00}\pm m_{11}\pm m_{22}}$, form the quaternion from the
-largest one (best conditioned, avoids dividing by a value near 0), and finally flip the sign so that $q_w\ge0$. The
-canonical sign matters for the loss, because $\mathbf{q}$ and $-\mathbf{q}$ are the same rotation but far apart in $L_1$.
+largest one (best conditioned, avoids dividing by a value near 0), and finally flip the sign so that $q_w\ge0$
+(\texttt{standardize\_quaternion}). The canonical sign matters for training with an $L_1$ loss, because $\mathbf{q}$ and
+$-\mathbf{q}$ are the same rotation but far apart in $L_1$. \texttt{\_sqrt\_positive\_part} returns
+$\sqrt{\max(0,x)}$ with a zero gradient at $x\le0$.
 
 %==========================================================================================
 \section{Phase 6: DPT dense heads}\label{sec:p6}
 \strip{6}
 
 \begin{card}{Phase 6 at a glance}
-Code & \src{vggt/heads/dpt\_head.py} (\texttt{DPTHead}, \texttt{FeatureFusionBlock}, \texttt{ResidualConvUnit},
-\texttt{activate\_head}) \\
+Code & \src{heads/dpt\_head.py} (\texttt{DPTHead}, \texttt{FeatureFusionBlock}, \texttt{ResidualConvUnit},
+\texttt{custom\_interpolate}), \src{heads/utils.py} (UV embedding), \src{heads/head\_act.py:27--62} (\texttt{activate\_head}) \\
 Input & patch tokens of 4 aggregator layers, $Z_\ell[:,:,5:] \in \mathbb{R}^{B\times S\times K\times 2C}$; images (for the size) \\
 Output & depth head: $D \in \mathbb{R}_{>0}^{B\times S\times H\times W\times 1}$, $\Sigma^D \in [1,\infty)^{B\times S\times H\times W}$;
 point head: $P \in \mathbb{R}^{B\times S\times H\times W\times 3}$, $\Sigma^P$ \\
@@ -521,11 +537,14 @@ upsample to full resolution, apply output activations \\
 \end{card}
 
 Both dense heads are the same class; only the number of output channels and the activation differ
-(\src{model.py:53--54}): the point head outputs $3+1$ channels with the inverse-log activation, the depth head $1+1$ channels
-with $\exp$. Frames are processed in chunks of 8 to bound memory.
+(\src{models/vggt.py:24--27}): the point head outputs $3+1$ channels with the inverse-log activation, the depth head $1+1$
+channels with $\exp$. Frames are processed in chunks of 8 to bound memory. With \texttt{feature\_only=True} the head stops
+after the second positional embedding and returns the feature map (used by the track head, Phase~8), and \texttt{down\_ratio}
+divides the output resolution. \texttt{custom\_interpolate} splits very large interpolations along the batch to stay under
+the INT\_MAX element limit of \texttt{F.interpolate}.
 
 \begin{algorithm}[htbp]
-\caption{DPT head (\texttt{DPTHead.\_forward}, \src{dpt\_head.py:140--166})}
+\caption{DPT head (\texttt{DPTHead.\_forward\_impl}, \src{heads/dpt\_head.py:94--124})}
 \begin{algorithmic}[1]
 \For{$n = 1..4$ with layer $\ell_n$}
   \State $F \gets \operatorname{LN}(Z_{\ell_n}[\text{patch tokens}])$, reshape to $(BS, 2C, h, w)$
@@ -543,15 +562,14 @@ with $\exp$. Frames are processed in chunks of 8 to bound memory.
 \end{algorithm}
 
 \paragraph{Shapes.} For VGGT-1B ($h = 37$) the pyramid is $256@148^2$, $512@74^2$, $1024@37^2$, $1024@19^2$, fused at 256
-channels to $296^2$, then resized to $518^2$. For the small model ($h=8$): $32@32^2$, $64@16^2$, $128@8^2$, $128@4^2$,
-fused at 32 channels to $64^2$, resized to $112^2$.
+channels to $296^2$, then resized to $518^2$.
 
 \paragraph{Fusion block.} With $\operatorname{RCU}(x) = \operatorname{Conv}_2\big(\operatorname{ReLU}(\operatorname{Conv}_1(\operatorname{ReLU}(x)))\big) + \operatorname{ReLU}(x)$,
 \[
   \operatorname{Fuse}(x, s) = \operatorname{Conv}_{1\times1}\Big(\operatorname{Up}\big(\operatorname{RCU}_2(x + \operatorname{RCU}_1(s))\big)\Big).
 \]
 The skip carrying $\operatorname{ReLU}(x)$ instead of $x$ is deliberate: the official code applies an in-place ReLU before the
-residual, and the released weights depend on it (\src{dpt\_head.py:69--73}). Bit-exact agreement with the official
+residual, and the released weights depend on it (\src{heads/dpt\_head.py:161--187}). Bit-exact agreement with the official
 outputs (last section) requires reproducing such details.
 
 \paragraph{UV positional embedding.} \texttt{create\_uv\_grid} gives each pixel coordinates
@@ -569,14 +587,16 @@ token-to-image reshape.
 \]
 $\exp$ keeps depth positive and makes the network predict log-depth. The inverse-log map is the inverse of
 $\operatorname{sign}(x)\log(1+|x|)$: it is near-linear around 0 (where the first camera's nearby points lie) and compresses
-large coordinates. $\Sigma\ge1$ is the aleatoric confidence used by the loss (Phase~9) and to filter points at inference.
+large coordinates. $\Sigma\ge1$ is an aleatoric confidence (trained so that it is roughly inversely proportional to the
+error); at inference it ranks points, e.g.\ to keep the most confident half in the exported point cloud and in the viewer.
 
 %==========================================================================================
 \section{Phase 7: From depth and cameras to a point map}\label{sec:p7}
 \strip{7}
 
 \begin{card}{Phase 7 at a glance}
-Code & \src{vggt/utils/geometry.py:25--35} (\texttt{unproject\_depth\_to\_world}), \texttt{inverse\_se3} (\src{6--14}) \\
+Code & \src{utils/geometry.py:11--47} (\texttt{unproject\_depth\_map\_to\_point\_map}, \texttt{depth\_to\_world\_coords\_points},
+\texttt{depth\_to\_cam\_coords\_points}), \texttt{closed\_form\_inverse\_se3} (\src{50--69}) \\
 Input & depth $D\in\mathbb{R}^{\dots\times H\times W}$, extrinsics $(\dots,3,4)$, intrinsics $(\dots,3,3)$ \\
 Output & world points $\in\mathbb{R}^{\dots\times H\times W\times3}$ \\
 How & back-project each pixel along its ray to the predicted depth, then map camera to world with the inverse rigid
@@ -590,22 +610,86 @@ For pixel $(u,v)$ with depth $D_{uv}$:
   \mathbf{X}_w = R^\top(\mathbf{X}_c - \mathbf{t}),
 \]
 where the closed-form inverse $\begin{bmatrix}R & \mathbf{t}\end{bmatrix}^{-1} = \begin{bmatrix}R^\top & -R^\top\mathbf{t}\end{bmatrix}$
-avoids a general matrix inverse. The same function is used in three places: to build the ground-truth point maps (Phase~8),
-for the paper's ``depth + camera'' point maps in evaluation (Phase~11), and to export the coloured point cloud in
-\src{scripts/demo\_pretrained.py} (keeping pixels above the 50th percentile of $\Sigma^D$). The paper (and our results) find
-these points more accurate than the point head's direct output.
+avoids a general matrix inverse. The official function works on NumPy arrays frame by frame; the evaluation code uses a
+batched torch version of the same formula (\src{evaluation/geometry.py}) to build the ground-truth point maps (Phase~9) and
+the ``depth + camera'' point maps (Phase~10). \src{demo\_pretrained.py} uses it to export the coloured point cloud
+(keeping pixels above the 50th percentile of $\Sigma^D$). The paper finds these points more accurate than the point head's
+direct output; Phase~10 measures both.
 
 %==========================================================================================
-\section{Phase 8: Synthetic multi-view data}\label{sec:p8}
+\section{Phase 8: Track head}\label{sec:p8}
 \strip{8}
 
 \begin{card}{Phase 8 at a glance}
-Code & \src{training/synthetic.py}: \texttt{SceneSampler} (\src{42--168}), \texttt{normalize\_views} (\src{171--184}),
+Code & \src{heads/track\_head.py:14--40}; \src{heads/track\_modules/base\_track\_predictor.py:17--120} (\texttt{BaseTrackerPredictor}),
+\src{blocks.py:13--146} (\texttt{EfficientUpdateFormer}, \texttt{CorrBlock}), \src{modules.py}, \src{utils.py} \\
+Input & the aggregator layers (as for the DPT heads), images, query points $\mathbf{q}\in\mathbb{R}^{B\times M\times 2}$ (pixels in frame 1) \\
+Output & 4 track predictions $T^{(k)}\in\mathbb{R}^{B\times S\times M\times 2}$ (pixels; the last is returned), visibility and
+confidence $\in[0,1]^{B\times S\times M}$ \\
+How & DPT head in feature-only mode gives dense tracking features; an iterative tracker (after CoTracker and VGGSfM)
+refines all track positions from correlation features with a time/space transformer \\
+\end{card}
+
+\paragraph{Tracking features.} \texttt{TrackHead} builds a \texttt{DPTHead(features=128, feature\_only=True, down\_ratio=2,
+pos\_embed=False)}: the same token-to-pyramid-to-fusion path as Phase~6, stopped before the output convolutions, at half
+resolution. For $518\times518$ images this gives $F\in\mathbb{R}^{B\times S\times 128\times 259\times 259}$. The tracker
+normalises them with a LayerNorm over channels.
+
+\paragraph{Initialisation.} Query points are divided by the feature stride (2). Every frame starts at the query position,
+$\mathbf{x}_{s,m}^{(0)} = \mathbf{q}_m$, and every track feature starts as the feature of frame 1 sampled at the query,
+$\mathbf{f}_{s,m} = F_1(\mathbf{q}_m)$ (bilinear sampling, \texttt{sample\_features4d}).
+
+\paragraph{Correlation pyramid} (\texttt{CorrBlock}). The feature maps are average-pooled 6 times (7 levels). For level $l$ the
+correlation of a track feature with every location, $c_l(\mathbf{u}) = \langle\mathbf{f}_{s,m}, F_s^{(l)}(\mathbf{u})\rangle/\sqrt{128}$,
+is sampled on a $9\times9$ grid (radius 4) around the current position $\mathbf{x}_{s,m}/2^l$. The $7\cdot81 = 567$ values
+go through an MLP to 128 channels. Only the window is kept per level, so the full correlation volume never has to be stored.
+
+\begin{algorithm}[htbp]
+\caption{Iterative tracker (\texttt{BaseTrackerPredictor.forward}, \src{base\_track\_predictor.py:47--120})}
+\begin{algorithmic}[1]
+\Require features $F$ ($S$ frames), queries $\mathbf{q}$ (frame 1), iterations $K=4$
+\State $\mathbf{x}_s \gets \mathbf{q}$ for all $s$;\quad $\mathbf{f}_s \gets F_1(\mathbf{q})$
+\For{$k = 1,\dots,K$}
+  \State $\mathbf{c} \gets \mathrm{MLP}(\mathrm{CorrBlock}(\mathbf{f}, \operatorname{sg}(\mathbf{x})))$ \Comment{local matching evidence}
+  \State $\Delta\mathbf{x}_s \gets \mathbf{x}_s - \mathbf{x}_1$;\quad $\mathbf{e} \gets [\mathrm{PE}(\Delta\mathbf{x}),\, \Delta\mathbf{x}/518,\, \Delta\mathbf{x}/518]$
+  \State $\mathbf{z} \gets [\mathbf{e}, \mathbf{c}, \mathbf{f}] + \mathrm{PE}_{2D}(\mathbf{q}) + \text{query/other-frame token}$ \Comment{388 channels}
+  \State $(\delta\mathbf{x}, \delta\mathbf{f}) \gets \mathrm{UpdateFormer}(\mathbf{z})$
+  \State $\mathbf{f} \gets \mathbf{f} + \mathrm{GELU}(W\,\mathrm{GN}(\delta\mathbf{f}))$;\quad $\mathbf{x} \gets \mathbf{x} + \delta\mathbf{x}$;\quad $\mathbf{x}_1 \gets \mathbf{q}$
+  \State $T^{(k)} \gets 2\,\mathbf{x}$ \Comment{back to image pixels}
+\EndFor
+\State visibility $\gets \sigma(W_v\mathbf{f})$, confidence $\gets \sigma(W_c\mathbf{f})$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Update transformer} (\texttt{EfficientUpdateFormer}). Input $(B, M, S, 388)$ is projected to 384 channels. Each of
+6 blocks first applies \emph{time} attention along the $S$ frames of each track, then \emph{space} attention across tracks.
+Space attention goes through 64 learned virtual tracks (parameter \texttt{virual\_tracks}, spelled as in the checkpoint):
+virtual $\leftarrow$ cross-attention to the real tracks, self-attention among virtual tracks, real tracks $\leftarrow$
+cross-attention to the virtual ones. This costs $O(M\cdot64)$ instead of $O(M^2)$ per frame. A residual from the input
+projection, a LayerNorm and a linear layer output $2 + 128$ values per track and frame. The attention blocks use
+\texttt{nn.MultiheadAttention} with 8 heads and take the residual \emph{after} their first LayerNorm, as in the official code.
+
+\paragraph{Positional embeddings.} $\mathrm{PE}(\Delta\mathbf{x})$ is an interleaved sin/cos embedding with 64 channels per
+axis (\texttt{get\_2d\_embedding}); $\mathrm{PE}_{2D}$ is the standard 2D sin-cos embedding of the feature grid (base 10000),
+sampled at the query position. A learned token (slot 0 for frame 1, slot 1 for the others, \texttt{query\_ref\_token}) tells the
+transformer which frame holds the query. Frame 1's positions are reset to the queries after every update.
+
+\paragraph{Sampling.} \texttt{bilinear\_sampler} maps pixel coordinates to \texttt{grid\_sample}'s $[-1,1]$ range with
+\texttt{align\_corners=True} ($x\mapsto 2x/(W-1)-1$) and detaches the coordinates, so gradients flow through the features but
+not through the positions; the coordinates are also detached at the start of each iteration.
+
+%==========================================================================================
+\section{Phase 9: Ground-truth test scenes}\label{sec:p9}
+\strip{9}
+
+\begin{card}{Phase 9 at a glance}
+Code & \src{evaluation/synthetic.py}: \texttt{SceneSampler} (\src{42--168}), \texttt{normalize\_views} (\src{171--184}),
 \texttt{generate\_dataset} (\src{187--199}), \texttt{MultiViewDataset} (\src{202--227}) \\
-Input & random seed, number of scenes, image size (112), views per scene (6) \\
-Output & per batch: images $(B,S,3,H,W)$, depths $(B,S,H,W)$, valid masks, world points $(B,S,H,W,3)$, extrinsics
-$(B,S,3,4)$, intrinsics $(B,S,3,3)$, normalised to the first camera and unit mean point distance \\
-How & a vectorised NumPy ray caster renders random rooms with spheres and boxes from cameras on an arc; ground truth is exact \\
+Input & random seed, number of scenes (50), image size (518), views per scene (8) \\
+Output & per scene and view subset: images $(S,3,H,W)$, depths $(S,H,W)$, valid masks, world points $(S,H,W,3)$, extrinsics
+$(S,3,4)$, intrinsics $(S,3,3)$, normalised to the first camera and unit mean point distance \\
+How & a vectorised NumPy ray caster renders random rooms with spheres and boxes from cameras on an arc; ground truth is
+exact, so pose, depth and point accuracy can be measured without a benchmark download \\
 \end{card}
 
 \paragraph{Scenes and cameras.} A room is an axis-aligned box with half-extents in $[3,5]\times[2,3]\times[3,5]$, containing
@@ -636,9 +720,9 @@ Colour is a \emph{solid} texture, a function of the 3D hit point (per-surface co
 times Lambertian shading $0.45 + 0.55\max(0, \mathbf{n}^\top\mathbf{l})$. Because appearance depends only on the 3D point,
 it is consistent across views, so correspondences exist to be learned.
 
-\paragraph{Storage and sampling.} Scenes are stored as \texttt{uint8} images and \texttt{fp16} depths (3000 training scenes:
-1.36\,GB; 200 test scenes with a disjoint seed). \texttt{MultiViewDataset.batch} draws $B$ random scenes and $S$ random
-views per scene; $S\in[2,6]$ is drawn once per step.
+\paragraph{Storage.} Scenes are stored as \texttt{uint8} images and \texttt{fp16} depths; 50 test scenes with 8 views at
+$518\times518$ take about 0.5\,GB and render in about a minute. \texttt{MultiViewDataset.get(idx, views)} returns the
+selected views of one scene, normalised as below; the evaluation uses the first $S$ views.
 
 \paragraph{Normalisation} (as in the official training code). With homogeneous extrinsics $T_i$:
 \begin{gather*}
@@ -647,98 +731,16 @@ views per scene; $S\in[2,6]$ is drawn once per step.
   s = \operatorname{mean}_{\text{valid}}\|\mathbf{X}\|,\qquad
   \mathbf{t}_i \leftarrow \mathbf{t}_i/s,\quad D\leftarrow D/s,\quad \mathbf{X}\leftarrow\mathbf{X}/s .
 \end{gather*}
-This removes the gauge freedom (global rigid motion and scale) that a multi-view network cannot observe.
+This removes the gauge freedom (global rigid motion and scale) that a multi-view network cannot observe, and matches
+the frame in which VGGT predicts (first camera = world).
 
 %==========================================================================================
-\section{Phase 9: Training objective}\label{sec:p9}
-\strip{9}
-
-\begin{card}{Phase 9 at a glance}
-Code & \src{training/losses.py}: \texttt{camera\_loss} (\src{16--27}), \texttt{regression\_loss} (\src{52--65}),
-\texttt{\_gradient\_loss} (\src{30--41}), \texttt{vggt\_loss} (\src{68--86}) \\
-Input & model predictions (pose list, depth/points and confidences) and the batch from Phase~8 \\
-Output & scalar objective and a dictionary of logged terms \\
-How & $\mathcal{L} = 5\,\mathcal{L}_{\text{camera}} + \mathcal{L}_{\text{depth}} + \mathcal{L}_{\text{pmap}}$ \\
-\end{card}
-
-\paragraph{Camera loss.} Targets $\mathbf{g}$ are built with Phase~5's encoder. Over the $n = 4$ refinement outputs, with
-$\gamma = 0.6$ (later iterations weigh more):
-\[
-  \mathcal{L}_{\text{camera}} = \frac{1}{n}\sum_{k=1}^{n}\gamma^{\,n-k}\Big(
-  \overline{|\hat{\mathbf{t}}^{(k)} - \mathbf{t}|} + \overline{|\hat{\mathbf{q}}^{(k)} - \mathbf{q}|}
-  + 0.5\,\overline{|\hat{\mathbf{f}}^{(k)} - \mathbf{f}|}\Big),
-\]
-where $\overline{\cdot}$ is the mean over elements and the translation error is clipped at 100. The paper states a Huber
-loss; the official code (and this one) uses $L_1$.
-
-\paragraph{Aleatoric-uncertainty regression.} For depth ($\mathbf{y}=D$) and points ($\mathbf{y}=P$), with per-pixel error
-$e_j = \|\hat{\mathbf{y}}_j - \mathbf{y}_j\|_2$ over valid pixels and $\alpha = 0.2$:
-\[
-  \mathcal{L}_{\text{conf}} = \operatorname{mean}\big(\Sigma_j e_j - \alpha\log\Sigma_j\big),\qquad
-  \mathcal{L}_{\text{reg}} = \operatorname{mean}(e_j),\qquad
-  \mathcal{L}_{\text{grad}} = \frac14\sum_{s=0}^{3} \ell_{\nabla}\big(\text{every }2^s\text{-th pixel}\big),
-\]
-\[
-  \ell_\nabla = \frac{1}{N_{\text{valid}}\,C}\sum_{j}\Big(\Sigma_j\,\big|\partial_x r_j\big| - \alpha\log\Sigma_j\Big)
-  + (\text{same for }\partial_y),\qquad r = (\hat{\mathbf{y}} - \mathbf{y})\cdot\text{mask},
-\]
-and $\mathcal{L}_{\text{depth}} = \mathcal{L}_{\text{conf}}+\mathcal{L}_{\text{grad}}+\mathcal{L}_{\text{reg}}$ (same for points).
-The gradient term rewards sharp, correctly placed discontinuities; the multi-scale version sees edges at several
-resolutions. Before averaging, values above the 98th percentile are dropped (\texttt{\_quantile\_filter}) to ignore outliers
-such as grazing-angle pixels.
-
-\paragraph{Why the confidence term works.} For one pixel, minimising $\Sigma e - \alpha\log\Sigma$ over $\Sigma$ gives
-$\partial_\Sigma = e - \alpha/\Sigma = 0 \Rightarrow \Sigma^\ast = \alpha/e$, i.e.\ the network learns to predict confidence
-inversely proportional to its own error, and the optimal value $\alpha\big(1 + \log(e/\alpha)\big)$ grows only
-logarithmically with $e$, making the loss robust. Since $\Sigma = 1 + e^{c}\ge 1$, pixels with $e > \alpha$ are pushed to
-$\Sigma\to1$. Both $\mathcal{L}_{\text{conf}}$ and $\mathcal{L}_{\text{grad}}$ can be negative, which is why the logged
-objective becomes negative late in training.
-
-%==========================================================================================
-\section{Phase 10: Training loop}\label{sec:p10}
+\section{Phase 10: Evaluation metrics}\label{sec:p10}
 \strip{10}
 
 \begin{card}{Phase 10 at a glance}
-Code & \src{training/train.py:35--106}; model factory \texttt{build\_model} (\src{30--32}) \\
-Input & command-line config (model width/depth, \texttt{aa\_order}, steps, batch, lr, warm-up, device) \\
-Output & \texttt{runs/<name>/config.json}, \texttt{log.jsonl} (every 50 steps), \texttt{model.pt} (every 1000 steps) \\
-How & AdamW with decoupled weight decay, linear warm-up + cosine decay, gradient clipping, random frame count per step \\
-\end{card}
-
-\begin{algorithm}[htbp]
-\caption{Training step (\src{train.py:87--106})}
-\begin{algorithmic}[1]
-\For{step $= 0,\dots,N-1$}
-  \State set learning rate $\eta(\text{step})$ for all parameter groups
-  \State $S \sim \mathcal{U}\{2,\dots,6\}$;\quad batch $\gets$ \texttt{ds.batch}$(B, S)$ \Comment{Phase 8}
-  \State preds $\gets$ model(batch.images) \Comment{Phases 1--6}
-  \State $\mathcal{L}\gets$ \texttt{vggt\_loss}(preds, batch) \Comment{Phase 9}
-  \State backprop; clip $\|\nabla\|_2\le 1$; AdamW step
-  \State every 50 steps: log; every 1000 steps: save checkpoint
-\EndFor
-\end{algorithmic}
-\end{algorithm}
-
-\paragraph{Learning-rate schedule.} With peak $\eta_0 = 4\times10^{-4}$, warm-up $N_w$ steps and progress
-$\pi = (\text{step}-N_w)/(N - N_w)$:
-\[
-  \eta(\text{step}) = \begin{cases}
-    \eta_0\,\dfrac{\text{step}+1}{N_w} & \text{step} < N_w,\\[6pt]
-    \eta_0\Big(0.02 + 0.98\cdot\tfrac12\big(1+\cos\pi\pi\big)\Big) & \text{otherwise,}
-  \end{cases}
-\]
-decaying to $2\%$ of the peak (the logged final value $8\times10^{-6}$). Weight decay $0.05$ is applied only to matrices
-and kernels (\texttt{p.ndim >= 2}) that are not learned tokens; biases, norms, LayerScale and tokens are not decayed.
-AdamW uses $\beta = (0.9, 0.95)$. CPU runs: batch 8, warm-up 300, 3k steps; Kaggle T4 runs: batch 16, warm-up 1000, 15k
-steps (configs in \texttt{results/} and \texttt{results/kaggle/}).
-
-%==========================================================================================
-\section{Phase 11: Evaluation metrics}\label{sec:p11}
-\strip{11}
-
-\begin{card}{Phase 11 at a glance}
-Code & \src{training/metrics.py}; driver \src{training/evaluate.py:20--50} \\
-Input & checkpoint(s), held-out test scenes, frame counts $S\in\{2,4,6\}$ \\
+Code & \src{evaluation/metrics.py}; driver \src{evaluation/evaluate\_pretrained.py:38--79} \\
+Input & VGGT-1B (released weights), the test scenes of Phase~9, frame counts $S\in\{2,4,8\}$ \\
 Output & JSON with AUC@\{5,15,30\}, RRA@15, RTA@15, median errors, focal error, depth AbsRel and $\delta<1.25$,
 point errors for the point head and for depth + camera \\
 How & predicted poses are compared pairwise (gauge-invariant); depth after median scaling; points after a Sim(3) alignment \\
@@ -777,13 +779,13 @@ $E$ prevents reflections. The reported point error is the mean Euclidean distanc
 head and for points unprojected from predicted depth and cameras (Phase~7).
 
 %==========================================================================================
-\section{Phase 12: Classical baseline: SIFT + 5-point RANSAC}\label{sec:p12}
-\strip{12}
+\section{Phase 11: Classical baseline: SIFT + 5-point RANSAC}\label{sec:p11}
+\strip{11}
 
-\begin{card}{Phase 12 at a glance}
-Code & \src{training/baseline\_sift.py:23--42} (\texttt{rel\_pose}), \src{50--89} \\
+\begin{card}{Phase 11 at a glance}
+Code & \src{evaluation/baseline\_sift.py:23--45} (\texttt{rel\_pose}), \texttt{evaluate\_sift} (\src{53--82}) \\
 Input & every ordered pair of the first $S$ test views, ground-truth intrinsics \\
-Output & the same pairwise metrics as Phase~11, plus the fraction of failed pairs (counted as $180^\circ$ error) \\
+Output & the same pairwise metrics as Phase~10, plus the fraction of failed pairs (counted as $180^\circ$ error) \\
 How & OpenCV: SIFT keypoints, brute-force $k$-NN matching with Lowe's ratio test, essential matrix by 5-point RANSAC,
 pose recovery with the cheirality check \\
 \end{card}
@@ -806,20 +808,49 @@ RANSAC selects the hypothesis with the most inliers. The baseline is given the g
 estimate itself.
 
 %==========================================================================================
-\section{Verification and inference scripts}
+\section{Phase 12: Demo and interactive 3D viewer}\label{sec:p12}
+\strip{12}
 
-\paragraph{Equivalence test} (\src{tests/test\_equivalence.py}). The official model is imported from a checkout given by
-\texttt{\$VGGT\_OFFICIAL} (temporarily hiding this repository's \texttt{vggt} package, since both share the name), built in a
-reduced configuration that still uses the real DINOv2-S patchifier, RoPE, QK-norm, AA, camera trunk and DPT heads. All
-parameters are randomised, copied into our model with \texttt{load\_state\_dict(strict=True)}, and all five outputs are compared
-on a non-square input ($182\times252$, which exercises the position-embedding interpolation). A second test builds the
-default model on the \texttt{meta} device and checks that it has $\approx$1.18\,B parameters. On Kaggle the same comparison with
-the released weights gave a maximum difference of exactly 0.
+\begin{card}{Phase 12 at a glance}
+Code & \src{demo\_pretrained.py} (\texttt{main}, \texttt{lift\_tracks} \src{78--97}); \src{scripts/export\_viewer.py}
+(\texttt{write\_viewer} \src{55--84}, \texttt{\_pack\_points} \src{33--52}, HTML/three.js template) \\
+Input & a folder of images, the VGGT-1B checkpoint \\
+Output & \texttt{depth\_*.png}, \texttt{points.ply}, \texttt{cameras.json}, \texttt{tracks/} (track overlays), \texttt{viewer.html},
+optionally \texttt{predictions.npz} \\
+How & official preprocessing and mixed-precision inference, Phase~5 and 7 to get cameras and points, tracks of a grid of
+query points, then one self-contained HTML viewer \\
+\end{card}
 
-\paragraph{Inference with released weights} (\src{scripts/demo\_pretrained.py}). Images are resized to width 518 with the
-height rounded to a multiple of 14 and centre-cropped to at most 518 (the official ``crop'' preprocessing). The aggregator
-runs under fp16/bf16 autocast, the heads in fp32 as in the official model. Outputs: depth PNGs, a PLY point cloud from
-Phase~7 filtered by depth confidence, and \texttt{cameras.json}.
+\paragraph{Inference.} Images are loaded with \texttt{load\_and\_preprocess\_images} (width 518, height rounded to a multiple
+of 14 and centre-cropped, or padded with white in \texttt{pad} mode). The model runs under bf16 (Ampere and newer) or fp16
+autocast; inside \texttt{VGGT.forward} the heads run in fp32. A $G\times G$ grid of query points in frame 1 (default
+$12\times12$) is tracked through all frames.
+
+\paragraph{Lifting tracks to 3D} (\texttt{lift\_tracks}). For every frame $s$ and visible, confident track point
+$(x, y)$ the predicted depth $D_s(y, x)$ is unprojected with that frame's camera (Phase~7). For a static scene a correctly
+tracked point lands on the same 3D location in every frame, so the 3D tracks visualise the multi-view consistency of the
+camera, depth and track predictions together.
+
+\paragraph{Viewer} (\texttt{write\_viewer}). The point cloud (depth + camera, and the point head as a second set) is randomly
+subsampled to at most 250k points, quantised to \texttt{int16} inside a robust bounding box, and its confidence replaced by
+the percentile rank (\texttt{uint8}), so the confidence slider means ``keep the top $x\,\%$''. Cameras are stored as
+camera-to-world matrices with focal lengths and a JPEG thumbnail. Everything is embedded as base64 in one HTML file that loads
+three.js from a CDN. The page converts OpenCV coordinates to three.js ($y$ up, $z$ backward), draws points with a small shader
+that discards points below the confidence threshold, draws camera frustums (first camera in red) and the 3D tracks, and
+``looks through'' a camera by placing the virtual camera at its centre with its field of view.
+
+%==========================================================================================
+\section{Verification against the official code}
+
+\paragraph{Equivalence tests} (\src{tests/test\_equivalence.py}). Both packages are called \texttt{vggt}, so the test imports
+each from its own path in turn and swaps the \texttt{vggt.*} entries of \texttt{sys.modules}. (1) A reduced configuration
+(DINOv2-S patchifier, 4 AA layers, 2-block camera trunk, all heads including tracking) is built for both by patching the same
+constructor defaults; all parameters are randomised, copied into our model with \texttt{load\_state\_dict(strict=True)}, and
+pose, depth, points, confidences, tracks, visibility and track confidence are compared on a non-square input
+($182\times252$, which exercises the position-embedding interpolation). (2) The full VGGT-1B configurations are built with
+parameters on the meta device and must have identical parameter names and shapes. (3) The parameter count is
+1{,}256{,}537{,}516. With the released checkpoint every output is bit-identical to the official implementation (max
+$|\mathrm{diff}| = 0$).
 
 \begin{thebibliography}{9}
 \bibitem{vggt} J.~Wang, M.~Chen, N.~Karaev, A.~Vedaldi, C.~Rupprecht, D.~Novotny.
