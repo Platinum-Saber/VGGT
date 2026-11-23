@@ -287,6 +287,21 @@ Peak GPU memory (GiB)  & 7.2  & 7.3  & 7.9  & 8.9  & 9.2  & 9.8 \\
 
 \noindent Exporting the 25-image kitchen scene with \texttt{scripts/demo\_pretrained.py} produced 25 depth maps and a
 coloured point cloud of 2.27\,M points (unprojected predicted depth with predicted cameras, top-50\% confidence).
+Figure~\ref{fig:kitchen} shows a subset of these outputs. The depth maps separate the object from the table and
+background with sharp boundaries, the fused point cloud is a recognisable 3D reconstruction of the scene, and the predicted
+camera centres form a ring above the table, consistent with photographs taken while walking around the object.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/kitchen_depth_vggt1b.png}\\[4pt]
+\includegraphics[width=0.85\linewidth]{figures/kitchen_pointcloud_vggt1b.png}
+\caption{Released \texttt{VGGT-1B} weights run through our implementation on the official 25-image \texttt{kitchen}
+example (Kaggle T4). Top: five input images and the predicted depth maps (turbo colour map, red = near).
+Bottom: two views of the point cloud obtained by unprojecting predicted depth with predicted cameras (60k of 2.27\,M points
+shown), with the predicted camera centres in red. The red line joins cameras in file-name order, which is not the capture
+order, hence the zig-zag.}
+\label{fig:kitchen}
+\end{figure}
 
 %==========================================================================================
 \section{Small-scale reproduction by training from scratch}
