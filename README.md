@@ -1,6 +1,6 @@
-# VGGT: Visual Geometry Grounded Transformer — from-scratch re-implementation
+# VGGT: Visual Geometry Grounded Transformer: from-scratch re-implementation
 
-- Paper: Wang et al., *VGGT: Visual Geometry Grounded Transformer*, CVPR 2025 — https://arxiv.org/pdf/2503.11651
+- Paper: Wang et al., *VGGT: Visual Geometry Grounded Transformer*, CVPR 2025, https://arxiv.org/pdf/2503.11651
 - Official code: https://github.com/facebookresearch/vggt
 
 This repository re-implements VGGT (camera, depth and point-map heads) from the paper, verifies it is
@@ -24,7 +24,7 @@ Not re-implemented: the tracking head (CoTracker-style), and BA post-processing.
 ## Verification against the official implementation
 
 `tests/test_equivalence.py` builds the official model and ours, loads the **same randomised weights**
-(`load_state_dict(strict=True)` — parameter names are identical), and compares outputs on non-square
+(`load_state_dict(strict=True)`; parameter names are identical), and compares outputs on non-square
 input (exercising DINOv2 pos-embed interpolation, RoPE, AA, camera trunk and DPT):
 
 ```
@@ -79,9 +79,9 @@ VGGT-1B was trained on 17 datasets with 64 A100s for 9 days, so the reproduction
   2–6 views on an arc around the scene (30–100° spread), random FoV 50–75°, 112×112 px. Exact depth, points and cameras.
   Normalised like the official training code (world = first camera, mean point distance = 1).
   3000 training scenes × 6 views; 200 held-out test scenes (different seed).
-- **Model**: `VGGT.small()` — same architecture, conv patchifier (no DINO pre-training), C=192, 6 heads,
+- **Model**: `VGGT.small()`: same architecture, conv patchifier (no DINO pre-training), C=192, 6 heads,
   6 AA layers (6 frame + 6 global blocks), light DPT heads: **10.66 M params**.
-- **Ablation** (paper Table 5): *global-attention only* with 12 global blocks — **same 10.66 M params**.
+- **Ablation** (paper Table 5): *global-attention only* with 12 global blocks, **same 10.66 M params**.
 - **Training**: AdamW (lr 4e-4, wd 0.05), warm-up + cosine, batch 8, 2–6 random frames per batch, grad-clip 1,
   **3000 steps** (~2.5 h per model on 2 CPU threads). Paper's loss weights (camera ×5, depth ×1, points ×1).
 
@@ -127,11 +127,11 @@ recover small objects that the 3k-step model blurs or misses (AbsRel 0.233 → 0
    SIFT is still better at tight thresholds (AUC@5 0.050 vs 0.004): when it succeeds it is more precise, matching the
    paper's observation that feed-forward predictions benefit from refinement (e.g. BA) for high accuracy.
    This was *not* visible after 3k CPU steps (AUC@30 0.042): the camera head was under-trained, not over-fitting.
-2. **Alternating-Attention ≫ global-only attention at equal parameter count** (paper Table 5) — reproduced, and the
+2. **Alternating-Attention ≫ global-only attention at equal parameter count** (paper Table 5): reproduced, and the
    gap grows with training: global-only stays at chance for translation direction (≈ 92°) and ~25° rotation error at
    both 3k and 15k steps, while AA improves to 23.6° / 7.0°. Depth quality is the same for both (AbsRel 0.087),
    consistent with depth being largely a single-view cue; the difference is in cross-view reasoning.
-3. **Point maps from depth + camera beat the dedicated point head** (paper Table 3) — reproduced for the AA model at
+3. **Point maps from depth + camera beat the dedicated point head** (paper Table 3): reproduced for the AA model at
    every frame count and both training lengths (15k: 0.086 vs 0.089 at 2 frames, 0.096 vs 0.099 at 4, 0.098 vs 0.101
    at 6; 3k: 0.235 vs 0.254 at 4 frames). The margin is small. For global-only, whose cameras are poor, depth + camera
    is much worse (0.212 vs 0.110), as expected: the combination is only as good as the predicted cameras.
@@ -170,6 +170,11 @@ python scripts/demo_pretrained.py --images path/to/*.jpg --out out/             
 method, verification, all result tables and charts, a claim-by-claim comparison with the paper, limitations and conclusion.
 Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex` (or `tectonic vggt_report.tex`).
 
+`report/code_walkthrough.pdf` (source `report/code_walkthrough.tex`) is a code-review companion: the architecture diagram
+split into 12 phases (input & patchify, token assembly, Alternating-Attention, camera head, pose decoding, DPT heads,
+unprojection, synthetic data, loss, training loop, evaluation metrics, SIFT baseline), each with its source location,
+input/output tensors and shapes, implementation and the underlying mathematics / algorithm.
+
 Figures are regenerated with (model checkpoints and `test.pt` are not in the repo):
 
 ```bash
@@ -187,5 +192,5 @@ scripts/         pretrained-weights demo, report figures
 notebooks/       Kaggle notebook
 results/         evaluation JSON, training logs and configs (CPU runs)
 results/kaggle/  15k-step GPU runs: configs, training logs, evaluation; VGGT-1B kitchen cameras
-report/          LaTeX report, figures and PDF
+report/          LaTeX report, code walkthrough, figures and PDFs
 ```

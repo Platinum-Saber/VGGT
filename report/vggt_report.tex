@@ -571,7 +571,7 @@ mixed globally, which appears to make correspondence-based reasoning much easier
 scenes, i.e.\ the model was under-trained rather than over-fitting. With 10$\times$ more training samples AUC@30 rose to 0.270.
 The camera branch is clearly the slowest to train; the paper's model additionally benefits from DINOv2 initialisation.
 
-\paragraph{Feed-forward versus classical.} The trained model is robust---it always outputs a pose and has much lower median errors---but
+\paragraph{Feed-forward versus classical.} The trained model is robust (it always outputs a pose and has much lower median errors), but
 its estimates are less precise at tight thresholds than SIFT + RANSAC whenever the latter succeeds (AUC@5 0.004 vs 0.050).
 The paper makes a similar observation at full scale: VGGT's feed-forward predictions are already strong, and refining them
 with bundle adjustment improves accuracy further.
@@ -590,14 +590,14 @@ with bundle adjustment improves accuracy further.
 \section{Conclusion}
 
 We re-implemented VGGT's camera, depth and point-map prediction from the paper and showed that the implementation is numerically
-identical to the official one---bit-exact with randomised weights and with the released 1.2\,B-parameter checkpoint on real
+identical to the official one: bit-exact with randomised weights and with the released 1.2\,B-parameter checkpoint on real
 images on a GPU. It can therefore be used as a drop-in replacement for these branches of the released model.
 
 Training a 10.7\,M-parameter version from scratch on procedurally rendered scenes reproduced the paper's central design finding:
 at equal parameter count, Alternating-Attention learns multi-view camera geometry, whereas global-only attention does not
 (AUC@30 0.270 vs 0.003). It also reproduced the finding that point maps derived from predicted depth and cameras are more accurate
 than directly regressed point maps. With enough training, the small feed-forward model surpassed a classical SIFT + RANSAC
-baseline in AUC@30 and in median rotation and translation error, while remaining less precise at tight thresholds---consistent with
+baseline in AUC@30 and in median rotation and translation error, while remaining less precise at tight thresholds, consistent with
 the paper's observation that feed-forward predictions benefit from optimisation-based refinement.
 
 Natural next steps are evaluating the released VGGT-1B on a public benchmark (e.g.\ CO3D or RealEstate10K camera AUC) with this

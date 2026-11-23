@@ -107,7 +107,7 @@ def main():
         training_curves({n: f"results/train_log_{n}.jsonl" for n, _, _ in RUNS},
                         os.path.join(a.out, "training_curves.pdf"), k=5)
     if a.gpu_curves:
-        # Both logs have ~300 entries (GPU: every 50 steps, CPU: every 10), so the same 5-entry window is used.
+        # train.py logs every 50 steps, so a 5-entry window spans 250 steps in both runs.
         training_curves({n: os.path.join(a.gpu_log_dir, f"train_log_{n}_long.jsonl") for n, _, _ in RUNS},
                         os.path.join(a.out, "training_curves_gpu.pdf"), k=5)
 
