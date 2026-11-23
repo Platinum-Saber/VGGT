@@ -66,7 +66,9 @@ peak memory includes the ~4.7 GiB of fp32 weights; the 1-frame run includes GPU 
 | Peak GPU memory (GiB) | 7.2 | 7.3 | 7.9 | 8.9 | 9.2 | 9.8 |
 
 Exporting the full 25-image kitchen scene with `scripts/demo_pretrained.py` produced 25 depth maps and a
-2.27 M-point cloud (depth + predicted cameras, top-50% confidence).
+2.27 M-point cloud (depth + predicted cameras, top-50% confidence); the predicted cameras are in
+`results/kaggle/kitchen_cameras.json`, and depth maps and point-cloud views are shown in the report
+(`report/figures/kitchen_depth_vggt1b.png`, `report/figures/kitchen_pointcloud_vggt1b.png`).
 
 ## Small-scale reproduction (trained from scratch)
 
@@ -97,7 +99,9 @@ Full numbers for 2/4/6 frames are in `results/eval.json`, training logs in `resu
 ### Longer training on a GPU (Kaggle T4, 15k steps)
 
 Same data, model, losses and test set; batch 16 instead of 8 and 15,000 steps instead of 3,000
-(10× more training samples), warm-up 1000 steps (`notebooks/kaggle_pretrained_vggt.ipynb`, Part 2).
+(10× more training samples), warm-up 1000 steps (`notebooks/kaggle_pretrained_vggt.ipynb`, Part 2);
+≈1.3 h (AA) / 1.4 h (global-only) on the T4. Configs, training logs and evaluation are in `results/kaggle/`
+(`config_{aa,global}_long.json`, `train_log_{aa,global}_long.jsonl`, `eval_long.json`).
 The SIFT baseline numbers are identical to the CPU run, confirming the same test set.
 
 | Method (4 frames) | AUC@30 ↑ | AUC@15 ↑ | AUC@5 ↑ | RRA@15 ↑ | RTA@15 ↑ | med. rot err ↓ | med. transl-dir err ↓ | failed pairs | Depth AbsRel ↓ | δ<1.25 ↑ | Point err (point head) ↓ | Point err (depth + cam) ↓ |
@@ -107,7 +111,12 @@ The SIFT baseline numbers are identical to the CPU run, confirming the same test
 | VGGT-small, **Alternating-Attention** | **0.270** | 0.082 | 0.004 | **0.865** | **0.269** | **7.0°** | **23.6°** | 0 % | **0.087** | **0.937** | 0.099 | **0.096** |
 
 AA model at 2 / 4 / 6 frames: AUC@30 0.249 / 0.270 / 0.272, RRA@15 0.860 / 0.865 / 0.872 (more frames help slightly).
-Full numbers: `results/eval_long_kaggle.json`.
+Full numbers: `results/eval_long_kaggle.json` (same values as `results/kaggle/eval_long.json`).
+
+Training curves (`report/figures/training_curves_gpu.pdf`): the global-only camera loss plateaus at ≈ 0.1 after
+~1k steps while the AA camera loss keeps falling to ≈ 0.03; depth losses of the two models stay together.
+Depth maps of the 15k-step AA model (`report/figures/qualitative_depth_gpu.pdf`) have sharp object boundaries and
+recover small objects that the 3k-step model blurs or misses (AbsRel 0.233 → 0.087).
 
 ### What reproduces, and what does not
 
@@ -153,13 +162,20 @@ python scripts/demo_pretrained.py --images path/to/*.jpg --out out/             
 1. downloads `facebook/VGGT-1B`, runs the official model and this implementation on the official example images
    and prints the output differences;
 2. times inference vs. number of frames;
-3. trains the AA and global-only small models for 30k steps (10× the CPU run) and evaluates them.
+3. trains the AA and global-only small models for 15k steps at batch 16 (10× the samples of the CPU run) and evaluates them.
 
 ## Report
 
 `report/vggt_report.pdf` (source `report/vggt_report.tex`, figures from `scripts/make_report_figures.py`) gives the full write-up:
 method, verification, all result tables and charts, a claim-by-claim comparison with the paper, limitations and conclusion.
-Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex`.
+Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex` (or `tectonic vggt_report.tex`).
+
+Figures are regenerated with (model checkpoints and `test.pt` are not in the repo):
+
+```bash
+python scripts/make_report_figures.py --cpu                       # training_curves.pdf, qualitative_depth.pdf (runs/aa, data/test.pt)
+python scripts/make_report_figures.py --gpu-curves     --gpu-ckpt path/to/runs/aa_long/model.pt --test-data path/to/data/test.pt   # training_curves_gpu.pdf, qualitative_depth_gpu.pdf
+```
 
 ## Layout
 
@@ -167,7 +183,9 @@ Rebuild with `cd report && pdflatex vggt_report.tex && pdflatex vggt_report.tex`
 vggt/            model: layers, DINOv2 patchifier, aggregator, camera & DPT heads, pose/geometry utils
 training/        synthetic data, losses, metrics, train / evaluate / SIFT baseline
 tests/           equivalence test vs. official code, VGGT-1B parameter count
-scripts/         pretrained-weights demo
+scripts/         pretrained-weights demo, report figures
 notebooks/       Kaggle notebook
-results/         evaluation JSON, training logs and configs
+results/         evaluation JSON, training logs and configs (CPU runs)
+results/kaggle/  15k-step GPU runs: configs, training logs, evaluation; VGGT-1B kitchen cameras
+report/          LaTeX report, figures and PDF
 ```

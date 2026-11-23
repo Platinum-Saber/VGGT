@@ -335,8 +335,8 @@ Parameters & 10.66\,M & 10.66\,M \\
 \midrule
 Optimiser & \multicolumn{2}{c}{AdamW, lr $4\!\times\!10^{-4}$, wd 0.05, warm-up + cosine, grad.\ clip 1} \\
 Frames per sample & \multicolumn{2}{c}{2--6 (random per batch)} \\
-Run A (CPU, 2 threads) & \multicolumn{2}{c}{batch 8, 3{,}000 steps ($\approx$2.5\,h per model)} \\
-Run B (Kaggle T4) & \multicolumn{2}{c}{batch 16, 15{,}000 steps (10$\times$ more samples)} \\
+Run A (CPU, 2 threads) & \multicolumn{2}{c}{batch 8, warm-up 300, 3{,}000 steps ($\approx$2.5\,h per model)} \\
+Run B (Kaggle T4) & \multicolumn{2}{c}{batch 16, warm-up 1{,}000, 15{,}000 steps ($\approx$1.4\,h per model)} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -494,19 +494,43 @@ depth + camera combination is consistently (slightly) better; for the global-onl
 
 \begin{figure}[htbp]
 \centering
+\begin{subfigure}{\linewidth}
 \includegraphics[width=\linewidth]{figures/training_curves.pdf}
-\caption{Training losses of the 3k-step CPU runs (moving average, log scale). Depth and point losses are almost identical for
-both models, while the AA model reaches a lower camera loss. The camera loss was still decreasing at the end of training,
-which motivated the longer GPU run.}
+\caption{Run A: 3k steps on the CPU (batch 8).}
+\label{fig:curves-cpu}
+\end{subfigure}\\[6pt]
+\begin{subfigure}{\linewidth}
+\includegraphics[width=\linewidth]{figures/training_curves_gpu.pdf}
+\caption{Run B: 15k steps on a Kaggle T4 (batch 16).}
+\label{fig:curves-gpu}
+\end{subfigure}
+\caption{Training losses (moving average over 5 log entries, log scale). (a) After 3k steps depth and point losses are almost
+identical for both models, the AA model reaches a lower camera loss, and the camera loss is still decreasing, which motivated
+the longer run. (b) Over 15k steps the depth losses of the two models stay together, but the global-only camera loss plateaus
+at $\approx 0.1$ after the first 1k steps while the AA camera loss keeps falling to $\approx 0.03$; the AA point loss also
+separates from the global-only one after $\approx$3k steps.}
 \label{fig:curves}
+\end{figure}
+
+Figure~\ref{fig:curves} shows the training losses of both runs. Figure~\ref{fig:qual} shows depth predictions of the 15k-step
+AA model on two held-out scenes; Figure~\ref{fig:qual-cpu} shows the same scenes for the 3k-step model. The longer-trained model
+recovers sharp object boundaries and small objects that the 3k-step model blurs or misses, in line with AbsRel falling from 0.233
+to 0.087 (Table~\ref{tab:dense}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/qualitative_depth_gpu.pdf}
+\caption{Two held-out synthetic scenes (4 views each): input images, ground-truth depth, and depth predicted by the 15k-step
+GPU AA model from the 4 views jointly (median-scaled; same colour range as the ground truth).}
+\label{fig:qual}
 \end{figure}
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.92\linewidth]{figures/qualitative_depth.pdf}
-\caption{Two held-out synthetic scenes (4 views each): input images, ground-truth depth, and depth predicted by the 3k-step
-CPU AA model (median-scaled; same colour range as the ground truth).}
-\label{fig:qual}
+\includegraphics[width=0.75\linewidth]{figures/qualitative_depth.pdf}
+\caption{Depth predicted by the 3k-step CPU AA model on the held-out scenes of Figure~\ref{fig:qual}, for comparison with the
+15k-step model: object outlines are blurred and small objects are largely missed.}
+\label{fig:qual-cpu}
 \end{figure}
 
 %==========================================================================================
@@ -583,7 +607,7 @@ tracking head.
 \paragraph{Reproducibility.} All code, configurations, logs and result files are in the repository:
 \texttt{vggt/} (model), \texttt{training/} (data, losses, metrics, training, evaluation, baseline), \texttt{tests/} (equivalence test),
 \texttt{notebooks/kaggle\_pretrained\_vggt.ipynb} (released-weights experiments and GPU training), \texttt{results/} (JSON results and
-training logs), and \texttt{scripts/make\_report\_figures.py} (figures of this report).
+training logs; \texttt{results/kaggle/} for the 15k-step GPU runs), and \texttt{scripts/make\_report\_figures.py} (figures of this report).
 
 \begin{thebibliography}{9}
 \bibitem{vggt} J.~Wang, M.~Chen, N.~Karaev, A.~Vedaldi, C.~Rupprecht, D.~Novotny.
