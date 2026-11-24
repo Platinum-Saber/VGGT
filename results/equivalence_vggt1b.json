@@ -1,0 +1,16 @@
+{
+ "_source": "Kaggle notebook notebooks/kaggle_vggt.ipynb, Version 4 (values as printed in the run log); tests/test_equivalence.py: 3 passed",
+ "gpu": "Tesla T4",
+ "precision": "fp32",
+ "images": "first 8 images of the official examples/kitchen scene, 4 query points",
+ "outputs": {
+  "pose_enc": {"max_abs_diff": 0.0, "max_abs_ref": 1.36},
+  "depth": {"max_abs_diff": 0.0, "max_abs_ref": 3.57},
+  "depth_conf": {"max_abs_diff": 0.0, "max_abs_ref": 30.3},
+  "world_points": {"max_abs_diff": 0.0, "max_abs_ref": 2.86},
+  "world_points_conf": {"max_abs_diff": 0.0, "max_abs_ref": 31.6},
+  "track": {"max_abs_diff": 0.0, "max_abs_ref": 510.0},
+  "vis": {"max_abs_diff": 0.0, "max_abs_ref": 1.0},
+  "conf": {"max_abs_diff": 0.0, "max_abs_ref": 0.999}
+ }
+}

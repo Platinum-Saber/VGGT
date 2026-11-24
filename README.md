@@ -24,6 +24,7 @@ demo_pretrained.py             run VGGT-1B on images: depth, point cloud, camera
 scripts/export_viewer.py       self-contained interactive 3D viewer (one HTML file)
 evaluation/                    rendered test scenes with exact GT, paper metrics, SIFT baseline, evaluate_pretrained.py
 tests/test_equivalence.py      equivalence with the official code
+results/                       JSON results of the Kaggle run
 notebooks/kaggle_vggt.ipynb    everything above on a Kaggle GPU
 report/                        LaTeX report and code walkthrough
 ```
@@ -43,50 +44,63 @@ images = load_and_preprocess_images(["a.png", "b.png"])
 predictions = model(images, query_points=torch.tensor([[100.0, 200.0]]))
 ```
 
-## Verified so far
+## Results (Kaggle, Tesla T4)
 
-**Same outputs as the official code.** `tests/test_equivalence.py` (run against an official checkout):
+All numbers come from one committed run of `notebooks/kaggle_vggt.ipynb` (23 min on a T4); the raw values are in
+`results/equivalence_vggt1b.json`, `results/timing.json` and `results/eval_pretrained.json`.
 
-- random weights, reduced config with every component (DINOv2-S patchifier, RoPE, Alternating-Attention, camera trunk,
-  DPT and track heads), non-square input: pose, depth, points, confidences, tracks, visibility and track confidence
-  all match;
-- the full VGGT-1B configurations have identical parameter names and shapes; 1,256,537,516 parameters.
-
-With the released checkpoint (CPU, fp32, 2 kitchen images at 350x518, 3 query points) every output is
-**bit-identical** to the official implementation (max |diff| = 0 for pose_enc, depth, depth_conf, world_points,
-world_points_conf, track, vis, conf). The notebook repeats this on a GPU with 8 images.
+**Same outputs as the official code.** `tests/test_equivalence.py`: 3 passed (random weights with every component incl.
+the track head; identical parameter names and shapes for VGGT-1B, 1,256,537,516 parameters). With the released checkpoint
+every output is **bit-identical** to the official implementation, max |diff| = 0 for pose_enc, depth, depth_conf,
+world_points, world_points_conf, track, vis and conf (fp32; 8 kitchen images on the T4, 2 images on CPU).
 
 ```bash
 git clone https://github.com/facebookresearch/vggt /path/to/official
 VGGT_OFFICIAL=/path/to/official python -m pytest tests -q     # 3 passed
 ```
 
-**Speed** (earlier Kaggle T4 run of the same network, fp16, 518 px wide; peak memory includes 4.7 GiB of weights):
+**Speed** (fp16, 518 px wide, warm run; peak memory includes 4.7 GiB of weights):
 
 | Frames | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| Time (s) | 0.76 | 0.59 | 1.05 | 2.21 | 5.56 | 15.68 |
-| Peak GPU memory (GiB) | 7.2 | 7.3 | 7.9 | 8.9 | 9.2 | 9.8 |
+| Time (s) | 0.38 | 0.68 | 1.34 | 2.85 | 6.90 | 19.03 |
+| Peak GPU memory (GiB) | 6.8 | 7.0 | 7.5 | 8.7 | 9.0 | 9.6 |
 
-**Real images.** On the official 25-image kitchen example the model produces 25 depth maps, a 2.27 M-point cloud
-and cameras on a ring around the object (`results/kaggle/kitchen_cameras.json`, figures in the report).
+**Real images.** The demo ran on the official kitchen (25 images, 2.27 M points), room (8, 0.81 M), LLFF fern
+(20, 2.03 M) and LLFF flower (25, 2.54 M) examples, each with depth maps, cameras, track images and a 3D viewer.
 
-To be filled in by the Kaggle rerun (`notebooks/kaggle_vggt.ipynb`): GPU equivalence incl. tracks, timing, the
-example scenes in the 3D viewer, and the ground-truth evaluation below.
+**Accuracy against exact ground truth** (50 rendered scenes, 518 x 518; SIFT + 5-point RANSAC is given the true
+intrinsics, VGGT-1B is not):
 
-## Checking the paper's claims against exact ground truth
+| Method | Views | AUC@30 | AUC@5 | RRA@15 | median rot. err. | median transl. err. | failed pairs |
+|---|---|---|---|---|---|---|---|
+| SIFT + 5-pt RANSAC | 4 | 0.473 | 0.239 | 0.693 | 2.87 deg | 12.2 deg | 8.3 % |
+| **VGGT-1B** | 2 | 0.773 | 0.314 | 1.000 | 0.50 deg | 4.1 deg | 0 |
+| **VGGT-1B** | 4 | **0.850** | 0.374 | **1.000** | **0.48 deg** | 3.8 deg | 0 |
+| **VGGT-1B** | 8 | 0.849 | **0.413** | **1.000** | 0.51 deg | **3.4 deg** | 0 |
 
-Real benchmarks (CO3D, RealEstate10K, DTU, ETH3D) are too large for a Kaggle session, so `evaluation/` renders test
-scenes with exact depth, points and cameras (ray-cast rooms with solid-textured objects, 518 x 518, 8 views each) and
-evaluates the released VGGT-1B zero-shot with the paper's metrics:
+| Views | Depth AbsRel | delta<1.25 | Point head error | Depth + camera error | s / scene |
+|---|---|---|---|---|---|
+| 2 | 0.044 | 0.968 | **0.0202** | 0.0205 | 0.97 |
+| 4 | 0.036 | 0.976 | **0.0164** | 0.0175 | 1.95 |
+| 8 | 0.032 | 0.981 | **0.0142** | 0.0156 | 4.37 |
 
-| Claim (paper) | Measured by |
-|---|---|
-| Feed-forward camera prediction is competitive with or better than classical methods (Tables 1-2) | pairwise pose AUC@30/15/5, RRA@15, RTA@15 vs. SIFT + 5-point RANSAC given the GT intrinsics |
-| Accurate depth (Table 4) | AbsRel and delta<1.25 after per-sequence median scaling |
-| Point maps from depth + predicted cameras beat the point head (Table 3) | point error after Sim(3) alignment for both |
-| More views help | all metrics for 2, 4 and 8 frames |
-| Fast (Table 9) | seconds per scene |
+SIFT with 2 / 8 views: AUC@30 0.439 / 0.467, failed pairs 12 % / 8.6 %.
+
+## The paper's claims
+
+| Claim (paper) | Result here | Status |
+|---|---|---|
+| Released model and architecture as described | bit-identical outputs, all heads incl. tracking | verified |
+| Feed-forward, about a second (Table 9) | 0.4-2.9 s for 1-8 frames on a T4 (paper: H100) | consistent |
+| Camera pose better than classical methods (Tables 1-2) | AUC@30 0.85 vs 0.47, median rotation 0.48 vs 2.87 deg, no failures | verified |
+| Accurate depth (Table 4) | AbsRel 0.032-0.044 zero-shot | verified |
+| More views help | depth, points, focal length and AUC@5 improve from 2 to 8 views; AUC@30 saturates at 4 | verified |
+| Depth + camera beats the point head (Table 3) | point head 2-10 % better on these scenes | not reproduced here |
+| Point tracking | tracks follow scene points on the examples; no ground truth to score | qualitative only |
+
+The ground-truth scenes are synthetic (ray-cast rooms with textured spheres and boxes), not the paper's real benchmarks,
+so they test geometric accuracy under exact ground truth on an unseen domain. To rerun:
 
 ```bash
 python -m evaluation.evaluate_pretrained --num-scenes 50 --frames 2 4 8 --sift   # -> results/eval_pretrained.json

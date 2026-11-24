@@ -42,9 +42,12 @@ We re-implemented the original VGGT package without modifications: the same modu
 defaults and parameter names as the official code, including the tracking head. Meta's released \texttt{VGGT-1B} weights
 load unchanged. With identical weights the re-implementation reproduces the official outputs \emph{exactly} (maximum
 absolute difference $0$ for cameras, depth, point maps, confidences and tracks), both with randomised weights and with the
-released checkpoint on real images. VGGT-1B is not retrained. Instead we test the paper's claims with the released model:
-inference speed, reconstructions of real example scenes (inspected in an interactive 3D viewer), and accuracy against exact
-ground truth on rendered scenes, compared with a classical SIFT + 5-point RANSAC baseline.
+released checkpoint on real images. VGGT-1B is not retrained. Instead we test the paper's claims with the released model
+on a free Kaggle T4 GPU. It runs in 0.4--2.9\,s for 1--8 frames, reconstructs the official example scenes coherently
+(inspected in an interactive 3D viewer), and on 50 rendered scenes with exact ground truth it reaches a pose AUC@30 of 0.85
+with 4 views, against 0.47 for SIFT + 5-point RANSAC given the true intrinsics, with depth AbsRel 0.036. More views improve
+depth, point maps and fine pose accuracy. One claim did not reproduce on these scenes: point maps from depth + predicted cameras
+were slightly \emph{less} accurate than the dedicated point head.
 \end{abstract}
 
 \tableofcontents
@@ -207,25 +210,27 @@ with \texttt{load\_state\_dict(strict=True)}. We performed three equivalence tes
         shapes ($1{,}256{,}537{,}516$ parameters).
   \item \textbf{Released weights}: the \texttt{facebook/VGGT-1B} checkpoint loaded with \texttt{strict=True} into both
         implementations, evaluated in fp32 on the first 2 images of the official \texttt{examples/kitchen} scene
-        ($350\times518$) with 3 query points, on a CPU. The Kaggle notebook repeats this on a GPU with 8 images.
+        ($350\times518$) with 3 query points, on a CPU, and again on the Kaggle T4 with the first 8 images and 4 query
+        points (also fp32).
 \end{enumerate}
 
 \begin{table}[htbp]
 \centering
 \caption{Maximum absolute difference between the official implementation and ours with identical weights.}
 \label{tab:equiv}
-\begin{tabular}{lccc}
+\small
+\begin{tabular}{lcccc}
 \toprule
-Output & Random weights & \texttt{VGGT-1B}, real images & $\max|\text{ref}|$ (\texttt{VGGT-1B})\\
+Output & Random w. & VGGT-1B, 2 img., CPU & VGGT-1B, 8 img., T4 & $\max|\text{ref}|$ (T4)\\
 \midrule
-Pose encoding $\mathbf g$          & 0.0 & 0.0 & 1.00 \\
-Depth $D$                          & 0.0 & 0.0 & 2.66 \\
-Depth confidence $\Sigma^D$        & 0.0 & 0.0 & 21.6 \\
-Point map $P$                      & 0.0 & 0.0 & 2.81 \\
-Point confidence $\Sigma^P$        & 0.0 & 0.0 & 24.8 \\
-Tracks $T$ (pixels)                & 0.0 & 0.0 & 450 \\
-Track visibility                   & 0.0 & 0.0 & 1.00 \\
-Track confidence                   & 0.0 & 0.0 & 1.00 \\
+Pose encoding $\mathbf g$          & 0.0 & 0.0 & 0.0 & 1.36 \\
+Depth $D$                          & 0.0 & 0.0 & 0.0 & 3.57 \\
+Depth confidence $\Sigma^D$        & 0.0 & 0.0 & 0.0 & 30.3 \\
+Point map $P$                      & 0.0 & 0.0 & 0.0 & 2.86 \\
+Point confidence $\Sigma^P$        & 0.0 & 0.0 & 0.0 & 31.6 \\
+Tracks $T$ (pixels)                & 0.0 & 0.0 & 0.0 & 510 \\
+Track visibility                   & 0.0 & 0.0 & 0.0 & 1.00 \\
+Track confidence                   & 0.0 & 0.0 & 0.0 & 1.00 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -242,9 +247,9 @@ blocks of the update transformer take the residual after the first LayerNorm; bo
 \subsection{Inference cost with the released weights}
 
 Table~\ref{tab:timing} and Figure~\ref{fig:timing} report wall-clock time and peak GPU memory of our implementation with the
-released weights on a Tesla T4 (fp16 autocast, images 518\,px wide). Peak memory includes $\approx$4.7\,GiB of fp32 weights;
-the 1-frame measurement includes GPU warm-up. Time grows super-linearly beyond 8 frames because global attention is
-quadratic in the total number of tokens.
+released weights on a Tesla T4 (fp16 autocast, images 518\,px wide, the official room and kitchen examples). Each
+frame count is run twice and the second, warm run is reported. Peak memory includes $\approx$4.7\,GiB of fp32 weights. Time
+grows super-linearly beyond 8 frames because global attention is quadratic in the total number of tokens.
 
 \begin{table}[htbp]
 \centering
@@ -254,8 +259,8 @@ quadratic in the total number of tokens.
 \toprule
 Frames & 1 & 2 & 4 & 8 & 16 & 32 \\
 \midrule
-Time (s)               & 0.76 & 0.59 & 1.05 & 2.21 & 5.56 & 15.68 \\
-Peak GPU memory (GiB)  & 7.2  & 7.3  & 7.9  & 8.9  & 9.2  & 9.8 \\
+Time (s)               & 0.38 & 0.68 & 1.34 & 2.85 & 6.90 & 19.03 \\
+Peak GPU memory (GiB)  & 6.8  & 7.0  & 7.5  & 8.7  & 9.0  & 9.6 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -269,7 +274,7 @@ Peak GPU memory (GiB)  & 7.2  & 7.3  & 7.9  & 8.9  & 9.2  & 9.8 \\
   xlabel={number of input frames}, ylabel={time (s)}, ymin=0,
   axis y line*=left, grid=major, grid style={gray!25}, legend style={at={(0.03,0.97)},anchor=north west,font=\scriptsize}
 ]
-\addplot[aa, thick, mark=*] coordinates {(1,0.76) (2,0.59) (4,1.05) (8,2.21) (16,5.56) (32,15.68)};
+\addplot[aa, thick, mark=*] coordinates {(1,0.38) (2,0.68) (4,1.34) (8,2.85) (16,6.90) (32,19.03)};
 \addlegendentry{time}
 \addlegendimage{glob, thick, mark=square*, dashed}\addlegendentry{peak memory}
 \end{axis}
@@ -279,18 +284,20 @@ Peak GPU memory (GiB)  & 7.2  & 7.3  & 7.9  & 8.9  & 9.2  & 9.8 \\
   ylabel={peak memory (GiB)}, ymin=6, ymax=10.5,
   axis y line*=right, axis x line=none
 ]
-\addplot[glob, thick, mark=square*, dashed] coordinates {(1,7.2) (2,7.3) (4,7.9) (8,8.9) (16,9.2) (32,9.8)};
+\addplot[glob, thick, mark=square*, dashed] coordinates {(1,6.8) (2,7.0) (4,7.5) (8,8.7) (16,9.0) (32,9.6)};
 \end{axis}
 \end{tikzpicture}
 \caption{Inference scaling of VGGT-1B (our implementation) on a Tesla T4.}
 \label{fig:timing}
 \end{figure}
 
-\noindent Exporting the 25-image kitchen scene with \texttt{scripts/demo\_pretrained.py} produced 25 depth maps and a
+\noindent Exporting the 25-image kitchen scene with \texttt{demo\_pretrained.py} produced 25 depth maps and a
 coloured point cloud of 2.27\,M points (unprojected predicted depth with predicted cameras, top-50\% confidence).
 Figure~\ref{fig:kitchen} shows a subset of these outputs. The depth maps separate the object from the table and
 background with sharp boundaries, the fused point cloud is a recognisable 3D reconstruction of the scene, and the predicted
-camera centres form a ring above the table, consistent with photographs taken while walking around the object.
+camera centres form a ring above the table, consistent with photographs taken while walking around the object. The same
+run also processed the official room (8 images, 0.81\,M points), LLFF fern (20 images, 2.03\,M points) and LLFF flower
+(25 images, 2.54\,M points) examples, each with track visualisations and a 3D viewer.
 
 \begin{figure}[htbp]
 \centering
@@ -329,23 +336,60 @@ algorithm in RANSAC (OpenCV), \emph{given the ground-truth intrinsics}; failed p
 
 \subsection{Results}
 
-The results are produced by the Kaggle notebook (\texttt{notebooks/kaggle\_vggt.ipynb}, part 4) and written to
-\texttt{results/eval\_pretrained.json}; Table~\ref{tab:gt} will be filled in from that file after the run.
+Tables~\ref{tab:gt} and~\ref{tab:gtdense} report the Kaggle run (\texttt{results/eval\_pretrained.json}); 50 scenes give
+50, 600 and 2800 ordered pairs for $S = 2, 4, 8$.
 
 \begin{table}[htbp]
 \centering
-\caption{Released VGGT-1B on 50 rendered scenes with exact ground truth (to be filled in from the Kaggle run).}
+\caption{Camera pose of the released VGGT-1B on 50 rendered scenes with exact ground truth, against SIFT + 5-point RANSAC
+given the ground-truth intrinsics. Pairwise metrics over all ordered frame pairs; best per $S$ in bold.}
 \label{tab:gt}
 \resizebox{\linewidth}{!}{%
-\begin{tabular}{llcccccc}
+\begin{tabular}{lcccccccc}
 \toprule
-Method & $S$ & AUC@30 $\uparrow$ & AUC@5 $\uparrow$ & RRA@15 $\uparrow$ & AbsRel $\downarrow$ & Pt.\ head $\downarrow$ & Depth+cam $\downarrow$ \\
+Method & $S$ & AUC@30 $\uparrow$ & AUC@15 $\uparrow$ & AUC@5 $\uparrow$ & RRA@15 $\uparrow$ & RTA@15 $\uparrow$ & med.\ rot.\ err. $\downarrow$ & med.\ transl.\ err. $\downarrow$ \\
 \midrule
-SIFT + 5-pt RANSAC (GT $K$) & 2, 4, 8 & -- & -- & -- & n/a & n/a & n/a \\
-VGGT-1B & 2, 4, 8 & -- & -- & -- & -- & -- & -- \\
+SIFT + 5-pt RANSAC (GT $K$) & 2 & 0.439 & 0.365 & 0.244 & 0.630 & 0.490 & $2.87^\circ$ & $16.7^\circ$ \\
+VGGT-1B                     & 2 & \textbf{0.773} & \textbf{0.615} & \textbf{0.314} & \textbf{1.000} & \textbf{0.870} & $\mathbf{0.50^\circ}$ & $\mathbf{4.1^\circ}$ \\
+\midrule
+SIFT + 5-pt RANSAC (GT $K$) & 4 & 0.473 & 0.395 & 0.239 & 0.693 & 0.522 & $2.87^\circ$ & $12.2^\circ$ \\
+VGGT-1B                     & 4 & \textbf{0.850} & \textbf{0.713} & \textbf{0.374} & \textbf{1.000} & \textbf{0.968} & $\mathbf{0.48^\circ}$ & $\mathbf{3.8^\circ}$ \\
+\midrule
+SIFT + 5-pt RANSAC (GT $K$) & 8 & 0.467 & 0.391 & 0.241 & 0.705 & 0.510 & $2.96^\circ$ & $13.7^\circ$ \\
+VGGT-1B                     & 8 & \textbf{0.849} & \textbf{0.719} & \textbf{0.413} & \textbf{1.000} & \textbf{0.947} & $\mathbf{0.51^\circ}$ & $\mathbf{3.4^\circ}$ \\
 \bottomrule
 \end{tabular}}
 \end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Depth, focal length and point maps of the released VGGT-1B on the same scenes. Point errors in normalised scene
+units (mean point distance 1) after Sim(3) alignment; better of the two point maps in bold. Time per scene on a T4 (fp16).}
+\label{tab:gtdense}
+\begin{tabular}{ccccccc}
+\toprule
+$S$ & AbsRel $\downarrow$ & $\delta<1.25$ $\uparrow$ & focal rel.\ err. $\downarrow$ & point head $\downarrow$ & depth + camera $\downarrow$ & s / scene \\
+\midrule
+2 & 0.044 & 0.968 & 0.077 & \textbf{0.0202} & 0.0205 & 0.97 \\
+4 & 0.036 & 0.976 & 0.064 & \textbf{0.0164} & 0.0175 & 1.95 \\
+8 & 0.032 & 0.981 & 0.060 & \textbf{0.0142} & 0.0156 & 4.37 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Pose.} VGGT-1B is far ahead of the classical baseline on every pose metric, although the baseline is given the
+true intrinsics and VGGT has to estimate them: AUC@30 0.85 vs.\ 0.47 with 4 views, a median rotation error of $0.48^\circ$
+vs.\ $2.87^\circ$, and every pair has a rotation error below $15^\circ$ (RRA@15 = 1.0), whereas SIFT fails outright on 8--12\%
+of the pairs. The gap is smaller at the tightest threshold (AUC@5 0.37 vs.\ 0.24): when SIFT succeeds it is precise, which
+matches the paper's remark that bundle adjustment on top of VGGT improves accuracy further.
+
+\paragraph{More views.} Going from 2 to 8 views improves depth (AbsRel $0.044\to0.032$), point maps ($0.020\to0.014$), focal
+length ($7.7\%\to6.0\%$) and fine pose accuracy (AUC@5 $0.31\to0.41$); AUC@30 saturates at 0.85 from 4 views on.
+
+\paragraph{Point head vs.\ depth + camera.} Here the point head is slightly \emph{more} accurate than unprojecting the predicted
+depth with the predicted cameras, at every $S$ (by 2\% at $S=2$ and 7--10\% at $S=4,8$). The paper reports the opposite on its
+benchmarks (Table~3). The difference is small, and our scenes are synthetic, simply textured rooms evaluated after a global
+Sim(3) alignment, so this does not contradict the paper's real-world result, but the claim is not reproduced in this setting.
 
 %==========================================================================================
 \section{Interactive 3D viewer}
@@ -375,13 +419,19 @@ Claim (paper) & Evidence here & Status \\
 Released model / architecture as described (Sec.~3) &
 Bit-exact outputs vs.\ official code with random and with released weights, all heads incl.\ tracking (Table~\ref{tab:equiv}) & Verified \\
 Feed-forward inference in about a second (Table~9) &
-0.6--2.2\,s for 2--8 frames on a T4 (Table~\ref{tab:timing}); the paper's numbers are for an H100 & Consistent \\
-Works on real images: cameras, depth, points, tracks (Sec.~4) &
-Coherent reconstruction of the kitchen scene (Figure~\ref{fig:kitchen}); further scenes in the viewer & Verified (qualitative) \\
-Pose competitive with / better than classical methods (Tables~1--2) &
-Ground-truth evaluation vs.\ SIFT + RANSAC (Table~\ref{tab:gt}) & Pending run \\
+0.4--2.9\,s for 1--8 frames on a T4 (Table~\ref{tab:timing}); the paper's numbers are for an H100 & Consistent \\
+Works on real images: cameras, depth, points, tracks &
+Coherent reconstructions of the kitchen, room and two LLFF scenes (Figure~\ref{fig:kitchen}, 3D viewer) & Verified (qualitative) \\
+Pose better than classical methods (Tables~1--2) &
+AUC@30 0.85 vs.\ 0.47, median rotation error $0.48^\circ$ vs.\ $2.87^\circ$, no failures vs.\ 8\% (Table~\ref{tab:gt}) & Verified \\
+Accurate multi-view depth (Table~4) &
+AbsRel 0.032--0.044, $\delta<1.25$ above 0.96 zero-shot on rendered scenes (Table~\ref{tab:gtdense}) & Verified \\
+More input views help &
+Depth, point maps, focal length and AUC@5 improve from 2 to 8 views; AUC@30 saturates at 4 & Verified \\
 Depth + camera gives better point maps than the point head (Table~3) &
-Ground-truth evaluation (Table~\ref{tab:gt}) & Pending run \\
+Point head 2--10\% better on rendered scenes (Table~\ref{tab:gtdense}) & Not reproduced here \\
+Point tracking (Sec.~4.4) &
+Tracks follow scene points on the example scenes (track images, 3D viewer); no ground-truth tracks to score & Qualitative only \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -392,6 +442,8 @@ Ground-truth evaluation (Table~\ref{tab:gt}) & Pending run \\
   \item The ground-truth test uses a synthetic indoor domain, not the paper's real-world benchmarks; it tests geometric accuracy
         under known ground truth, and is out of the training distribution for VGGT-1B.
   \item A two-view classical baseline instead of full SfM pipelines (COLMAP, VGGSfM); the baseline is given ground-truth intrinsics.
+  \item 50 rendered scenes and one run; differences of a few percent (point head vs.\ depth + camera) are trends, not
+        statistically established gaps. Tracking is only checked qualitatively.
   \item The official bundle-adjustment and COLMAP-export code (\texttt{vggt/dependency/}) is not part of this re-implementation.
 \end{itemize}
 
@@ -401,9 +453,12 @@ Ground-truth evaluation (Table~\ref{tab:gt}) & Pending run \\
 We re-implemented the original VGGT package, including the tracking head, with the official module layout and parameter
 names, and showed that it is numerically identical to the official implementation: bit-exact with randomised weights and
 with the released 1.2\,B-parameter checkpoint on real images, for cameras, depth, point maps, confidences and tracks. It can
-therefore be used as a drop-in replacement for the official package. With the released weights the model runs in seconds on
-a T4 and reconstructs real scenes coherently. The ground-truth evaluation on rendered scenes, run in the Kaggle notebook,
-quantifies pose, depth and point-map accuracy against a classical baseline.
+therefore be used as a drop-in replacement for the official package. With the released weights the model runs in a few
+seconds on a free T4 and reconstructs real scenes coherently. Against exact ground truth on rendered scenes it confirms the
+paper's central claims: feed-forward camera estimation far more accurate and robust than a classical SIFT + RANSAC baseline
+(AUC@30 0.85 vs.\ 0.47), accurate depth (AbsRel 0.036 with 4 views), and gains from more views. The one claim that did not
+reproduce in this setting is that point maps from depth + cameras beat the point head; on our scenes the point head was
+slightly better.
 
 \paragraph{Reproducibility.} \texttt{vggt/} (model, same layout as the official package), \texttt{tests/} (equivalence tests),
 \texttt{demo\_pretrained.py} and \texttt{scripts/export\_viewer.py} (exports and 3D viewer), \texttt{evaluation/} (rendered

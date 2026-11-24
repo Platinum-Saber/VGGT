@@ -1,0 +1,14 @@
+{
+ "_source": "Kaggle notebook notebooks/kaggle_vggt.ipynb, Version 4 (values as printed in the run log); second of two runs per frame count, after CUDA warm-up",
+ "gpu": "Tesla T4",
+ "dtype": "torch.float16",
+ "images": "official examples room + kitchen, 518 px wide",
+ "timing": [
+  {"frames": 1, "seconds": 0.38, "peak_mem_gib": 6.8},
+  {"frames": 2, "seconds": 0.68, "peak_mem_gib": 7.0},
+  {"frames": 4, "seconds": 1.34, "peak_mem_gib": 7.5},
+  {"frames": 8, "seconds": 2.85, "peak_mem_gib": 8.7},
+  {"frames": 16, "seconds": 6.90, "peak_mem_gib": 9.0},
+  {"frames": 32, "seconds": 19.03, "peak_mem_gib": 9.6}
+ ]
+}
