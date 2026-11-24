@@ -1,0 +1,786 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="description" content="Scroll-driven walkthrough of the VGGT pipeline with WebGL reconstructions and measured results."><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Inside VGGT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a sticky "instrument" stage (architecture on top, live explanation below) with step cards scrolling beside it,
+   then a free 3D explorer, then results charts and tables. Committed dark look: a lab display, slate with a blue signal. */
+:root{
+  color-scheme:dark;
+  --bg:#0c1014; --panel:#121820; --panel-2:#18202a; --line:#26303c; --line-2:#344050;
+  --ink:#e8edf2; --ink-2:#a9b4c0; --ink-3:#76828f;
+  --signal:#3987e5;          /* VGGT, series 1 */
+  --signal-soft:#3987e533;
+  --sift:#d95926;            /* classical baseline, series 2 */
+  --aux:#199e70;             /* depth + camera (series 3) */
+  --frame:#5aa9e6; --global:#e66767; --first:#eda100;
+  --ok:#0ca30c; --warn:#c98500; --bad:#e66767;
+  --f-display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-body);margin:0}
+a{color:var(--frame)}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+.eyebrow{font:500 12px/1.4 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.mono{font-family:var(--f-mono)}
+/* ---------------------------------------------------------------- hero */
+.hero{padding-block:56px 40px;border-bottom:1px solid var(--line)}
+.hero h1{font-size:clamp(40px,7vw,76px);line-height:1;margin-top:10px}
+.hero h1 span{color:var(--signal)}
+.lede{max-width:64ch;color:var(--ink-2);font-size:17px;margin:18px 0 0}
+.hero-row{display:flex;gap:28px;align-items:center;margin-top:30px;flex-wrap:wrap}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap}
+.thumbs img{width:92px;height:62px;object-fit:cover;border-radius:4px;border:1px solid var(--line-2);display:block}
+.arrow{font:500 22px var(--f-mono);color:var(--ink-3)}
+.outs{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font:500 12px var(--f-mono);border:1px solid var(--line-2);border-radius:999px;padding:4px 10px;color:var(--ink-2);white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:34px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.stat{padding:16px 18px;border-left:1px solid var(--line);min-width:0}
+.stat:first-child{border-left:0}
+.stat b{display:block;font:600 28px/1.1 var(--f-display);font-variant-numeric:tabular-nums}
+.stat small{display:block;color:var(--ink-3);font-size:12.5px;margin-top:6px}
+.stat b em{font-style:normal;color:var(--ink-3);font-size:18px}
+@media (max-width:760px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat:nth-child(3){border-left:0}.stat:nth-child(n+3){border-top:1px solid var(--line)}}
+/* ---------------------------------------------------------------- story */
+.story{position:relative;border-bottom:1px solid var(--line);display:grid;grid-template-columns:38% 62%}
+.stage{position:sticky;top:env(safe-area-inset-top,0px);height:100vh;height:100dvh;display:grid;grid-template-rows:42% 58%;
+  border-left:1px solid var(--line);background:var(--bg);grid-column:2;grid-row:1;align-self:start;min-width:0}
+.arch-box{position:relative;border-bottom:1px solid var(--line);overflow:hidden}
+#arch{width:100%;height:100%;display:block}
+.step-label{position:absolute;left:14px;top:12px;font:500 11px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.detail-box{position:relative;overflow:hidden}
+.detail{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .25s linear;display:flex;flex-direction:column}
+.detail canvas{flex:1;width:100%;min-height:0;display:block}
+.detail .cap{font:12px/1.5 var(--f-mono);color:var(--ink-3);padding:0 16px 12px}
+#gl{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .25s linear}
+.inset{position:absolute;right:12px;bottom:12px;width:min(42%,300px);border:1px solid var(--line-2);border-radius:6px;overflow:hidden;opacity:0;transition:opacity .25s;background:var(--panel)}
+.inset img{display:block;width:100%}
+.inset span{position:absolute;left:8px;top:6px;font:500 11px var(--f-mono);color:var(--ink);background:#0c1014cc;padding:1px 6px;border-radius:3px}
+.steps{grid-column:1;grid-row:1;min-width:0}
+.step{height:100vh;height:100dvh;display:flex;align-items:center;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:22px}
+.card{max-width:440px;min-width:0;flex:1}
+.card .eyebrow{color:var(--signal)}
+.card h2{font-size:28px;line-height:1.15;margin:8px 0 12px}
+.card p{color:var(--ink-2);margin:0 0 10px}
+.card .eq{font:13px/1.6 var(--f-mono);color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:10px 0;overflow-x:auto;white-space:nowrap}
+.card .src{font:12px var(--f-mono);color:var(--ink-3)}
+@media (max-width:860px){
+  .story{display:block}
+  .stage{height:62vh;height:62dvh;border-left:0;border-bottom:1px solid var(--line);z-index:2}
+  .steps{position:relative}
+  .step{height:100vh;height:100dvh;align-items:flex-end;padding-bottom:24px;padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .card{background:#121820f2;border:1px solid var(--line-2);border-radius:8px;padding:14px 16px;position:relative;z-index:3;max-width:none}
+  .card h2{font-size:22px}
+}
+/* ---------------------------------------------------------------- explorer */
+.section{padding-block:56px}
+.section h2{font-size:34px;margin:8px 0 10px}
+.section .intro{color:var(--ink-2);max-width:68ch;margin:0 0 22px}
+.explorer{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+#gl2{width:100%;height:min(70vh,620px);display:block;background:var(--bg)}
+.controls{padding:16px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:14px;min-width:0}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button,.btn{font:500 12.5px var(--f-body);color:var(--ink-2);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:6px 10px;cursor:pointer}
+.seg button[aria-pressed="true"]{color:var(--ink);border-color:var(--signal);background:var(--signal-soft)}
+.controls label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-3)}
+.controls input[type=range]{width:100%;accent-color:var(--signal)}
+.controls .check{justify-content:flex-start;gap:8px;color:var(--ink-2)}
+.meta{font:12px/1.6 var(--f-mono);color:var(--ink-3)}
+@media (max-width:860px){.explorer{grid-template-columns:minmax(0,1fr)}.controls{border-left:0;border-top:1px solid var(--line)}}
+/* ---------------------------------------------------------------- results */
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+@media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.chart{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:16px 16px 10px;min-width:0;position:relative}
+.chart h3{font-size:16px;font-weight:600}
+.chart .sub{color:var(--ink-3);font-size:12.5px;margin:2px 0 8px}
+.chart svg{width:100%;height:auto;display:block;overflow:visible}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin:4px 0 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;font:12px/1.45 var(--f-body);color:var(--ink);z-index:20;opacity:0;transition:opacity .1s;max-width:240px}
+.tip b{font-variant-numeric:tabular-nums}
+.tables{display:grid;gap:18px;margin-top:18px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+caption{text-align:left;padding:12px 14px 4px;font:600 15px var(--f-display);color:var(--ink)}
+th,td{padding:8px 14px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{color:var(--ink-3);font-weight:500;font-size:12px;border-top:0}
+tbody tr:hover td{background:var(--panel-2)}
+td.best{color:var(--ink);font-weight:600}
+td.wrap{white-space:normal;text-align:left;min-width:220px}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--f-body);padding:2px 9px;border-radius:999px;border:1px solid}
+.pill.ok{color:var(--ok);border-color:#0ca30c66}
+.pill.part{color:var(--warn);border-color:#c9850066}
+.pill.no{color:var(--bad);border-color:#e6676766}
+.foot{color:var(--ink-3);font-size:12.5px;border-top:1px solid var(--line);padding-block:24px 40px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.detail,#gl,.inset{transition:none}}
+</style>
+</head><body>
+
+<header class="hero">
+ <div class="wrap">
+  <div class="eyebrow">VGGT, CVPR 2025 &middot; re-implementation &middot; released VGGT-1B weights &middot; Kaggle T4</div>
+  <h1>Inside <span>VGGT</span></h1>
+  <p class="lede">One transformer pass turns a handful of photos into cameras, depth maps, a 3D point map and point tracks.
+  Scroll to follow the 25 kitchen photos through each part of the network, then explore the reconstructions and the
+  measured results against exact ground truth.</p>
+  <div class="hero-row">
+   <div class="thumbs" id="heroThumbs">
+    <img src="img/in_00.jpg" alt="Kitchen input 1"><img src="img/in_01.jpg" alt="Kitchen input 2">
+    <img src="img/in_02.jpg" alt="Kitchen input 3"><img src="img/in_03.jpg" alt="Kitchen input 4">
+   </div>
+   <div class="arrow" aria-hidden="true">&rarr; f(&middot;) &rarr;</div>
+   <div class="outs"><span class="chip">cameras g&#7522;</span><span class="chip">depth D&#7522;</span><span class="chip">point map P&#7522;</span><span class="chip">tracks T&#7522;</span></div>
+  </div>
+  <div class="stats" id="stats">
+   <div class="stat"><b>0.0</b><small>max difference to the official code, all 8 outputs</small></div>
+   <div class="stat"><b>0.85 <em>vs 0.47</em></b><small>pose AUC@30, VGGT-1B vs SIFT + RANSAC (4 views)</small></div>
+   <div class="stat"><b>2.9 s</b><small>8 frames on a free T4 GPU (fp16)</small></div>
+   <div class="stat"><b>1.26 B</b><small>parameters, weights loaded unchanged</small></div>
+  </div>
+ </div>
+</header>
+
+<section class="story" id="story" aria-label="How the pipeline works">
+ <div class="stage" id="stage">
+  <div class="arch-box">
+   <div class="step-label" id="stepLabel">Architecture</div>
+   <svg id="arch" viewBox="0 0 1600 640" role="img" aria-label="VGGT architecture diagram"></svg>
+  </div>
+  <div class="detail-box" id="detailBox">
+   <div class="detail" data-d="0"><canvas></canvas><div class="cap">S photos of one scene in, per-frame outputs out, one forward pass.</div></div>
+   <div class="detail" data-d="1"><canvas></canvas><div class="cap">Kitchen frame 1: 779&times;520 px &rarr; 518&times;350 px, then per-channel standardisation.</div></div>
+   <div class="detail" data-d="2"><canvas></canvas><div class="cap">14&times;14 px patches: 25 rows &times; 37 columns = 925 tokens per frame.</div></div>
+   <div class="detail" data-d="3"><canvas></canvas><div class="cap">Per frame: 1 camera + 4 register + 925 patch tokens = 930 tokens. Frame 1 uses its own learned pair.</div></div>
+   <div class="detail" data-d="4"><canvas></canvas><div class="cap">Blue: frame-wise attention (within one image). Red: global attention (across all images).</div></div>
+   <div class="detail" data-d="5"><canvas></canvas><div class="cap">Illustration with the final predicted kitchen cameras: each refinement adds an update &Delta;g.</div></div>
+   <div class="detail" data-d="6"><canvas></canvas><div class="cap">Feature pyramid at &times;4, &times;2, &times;1, &times;&frac12; of the 25&times;37 patch grid, fused into the real predicted depth.</div></div>
+   <canvas id="gl" aria-label="3D view of the kitchen reconstruction"></canvas>
+   <div class="inset" id="trackInset"><img id="trackImg" src="img/track_00.jpg" alt="Predicted tracks on a kitchen frame"><span id="trackLbl">frame 1</span></div>
+  </div>
+ </div>
+ <div class="steps" id="steps">
+  <div class="step"><div class="card"><div class="eyebrow">The whole network</div><h2>Photos in, geometry out</h2>
+   <p>VGGT takes S images of a scene and predicts, for every frame, its camera, a depth map, a point map in the first camera's coordinates and the motion of query points. There is no optimisation loop: one forward pass of a 1.26 B-parameter transformer.</p>
+   <p>Scroll to zoom into each part. The numbers on the diagram are the phases of the code walkthrough.</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 1 &middot; inputs</div><h2>Sanitising the images</h2>
+   <p><span class="mono">load_and_preprocess_images</span> resizes every photo to width 518 and rounds the height to a multiple of the 14 px patch size, centre-cropping anything taller than 518. RGBA images are composited on white.</p>
+   <p>Inside the model each channel is standardised with the ImageNet statistics DINOv2 was trained on, and the S frames are folded into the batch.</p>
+   <div class="eq">x' = (x &minus; &mu;) / &sigma;, &mu; = (0.485, 0.456, 0.406), &sigma; = (0.229, 0.224, 0.225)</div>
+   <p class="src">vggt/utils/load_fn.py &middot; vggt/models/aggregator.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 1 &middot; DINOv2 patchifier</div><h2>Cutting the image into tokens</h2>
+   <p>A 14&times;14 convolution with stride 14 is a shared linear map from each patch's 588 pixel values to a 1024-dimensional token. DINOv2 ViT-L adds learned position embeddings (bicubically resized to the 25&times;37 grid) and runs 24 transformer blocks.</p>
+   <div class="eq">e&#8342; = W &middot; vec(patch&#8342;) + b, &nbsp;W &isin; &#8477;<sup>1024&times;588</sup></div>
+   <p class="src">vggt/layers/patch_embed.py &middot; vggt/layers/vision_transformer.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 2 &middot; tokens</div><h2>Marking the reference frame</h2>
+   <p>Every frame gets one camera token and four register tokens in front of its patches. Frame 1 uses a separately learned pair; all others share the second pair. That is how the network knows which camera defines the world frame.</p>
+   <p>For the rotary position embedding, patches get their grid position (row + 1, column + 1) and special tokens get 0, which means no rotation.</p>
+   <p class="src">vggt/models/aggregator.py &middot; vggt/layers/rope.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 3 &middot; Alternating-Attention</div><h2>Looking within, then across frames</h2>
+   <p>24 pairs of transformer blocks alternate two views of the same tokens. A frame block reshapes them to (B&middot;S, P, C): each image attends only to itself. A global block reshapes to (B, S&middot;P, C): every token sees every frame.</p>
+   <div class="eq">frame: O(S&middot;P&sup2;) &nbsp;&middot;&nbsp; global: O((S&middot;P)&sup2;)</div>
+   <p>Layers 4, 11, 17 and 23 are kept, with frame and global outputs concatenated to 2048 channels for the heads. QK-norm and 2D RoPE sit inside every attention.</p>
+   <p class="src">vggt/models/aggregator.py &middot; vggt/layers/block.py, attention.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phases 4&ndash;5 &middot; camera head</div><h2>Refining the cameras</h2>
+   <p>Only each frame's camera token is used. Four times, the current estimate modulates the tokens (adaptive LayerNorm), a 4-block trunk mixes information across frames, and an MLP adds an update.</p>
+   <div class="eq">g = [t &isin; &#8477;&sup3;, q &isin; &#8477;&#8308;, fov&#8341;, fov&#8358;] &nbsp; f = (W/2) / tan(fov/2)</div>
+   <p>The 9 numbers decode to an OpenCV camera: rotation from the quaternion, focal length from the field of view, principal point at the image centre.</p>
+   <p class="src">vggt/heads/camera_head.py &middot; vggt/utils/pose_enc.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 6 &middot; DPT heads</div><h2>From tokens back to pixels</h2>
+   <p>The patch tokens of the four kept layers are reshaped into feature maps and resized to four scales, then fused coarse to fine and upsampled to full resolution.</p>
+   <div class="eq">D = exp(y) &nbsp;&middot;&nbsp; P = sign(y)(e<sup>|y|</sup> &minus; 1) &nbsp;&middot;&nbsp; &Sigma; = 1 + e<sup>c</sup></div>
+   <p>The same head design predicts the depth map and the point map; the last channel is a confidence used to filter points.</p>
+   <p class="src">vggt/heads/dpt_head.py &middot; vggt/heads/head_act.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 7 &middot; unprojection</div><h2>Lifting depth into 3D</h2>
+   <p>Each pixel is pushed along its camera ray to its predicted depth, then moved into the first camera's frame. Scroll to watch 140,000 kitchen points leave the image plane.</p>
+   <div class="eq">X&#8381; = D(u,v) &middot; K&#8315;&sup1;[u, v, 1]&#7488; &nbsp;&nbsp; X = R&#7488;(X&#8381; &minus; t)</div>
+   <p>The paper reports these points are more accurate than the point head's; on our rendered test scenes the point head was slightly better.</p>
+   <p class="src">vggt/utils/geometry.py</p></div></div>
+  <div class="step"><div class="card"><div class="eyebrow">Phase 8 &middot; track head</div><h2>Following points through the frames</h2>
+   <p>A third DPT head produces 128-channel tracking features at half resolution. Starting from the query points of frame 1, a tracker samples a 7-level correlation pyramid around each guess and lets a time/space transformer predict corrections, 4 times.</p>
+   <p>Right: the tracked grid on kitchen frames. In 3D, a consistent track collapses to a single point.</p>
+   <p class="src">vggt/heads/track_head.py &middot; vggt/heads/track_modules/</p></div></div>
+ </div>
+</section>
+
+<section class="section" id="explore">
+ <div class="wrap">
+  <div class="eyebrow">Output</div>
+  <h2>Explore the reconstructions</h2>
+  <p class="intro">Point clouds from depth + predicted cameras for the four official example scenes, produced by this re-implementation with the released weights on Kaggle. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+  <div class="explorer">
+   <canvas id="gl2" aria-label="Interactive 3D reconstruction"></canvas>
+   <div class="controls">
+    <div><div class="eyebrow" style="margin-bottom:8px">Scene</div>
+     <div class="seg" id="sceneSeg">
+      <button type="button" data-s="kitchen" aria-pressed="true">Kitchen</button>
+      <button type="button" data-s="room" aria-pressed="false">Room</button>
+      <button type="button" data-s="llff_fern" aria-pressed="false">Fern</button>
+      <button type="button" data-s="llff_flower" aria-pressed="false">Flower</button>
+     </div></div>
+    <div><label for="conf2">Keep top confidence <span id="conf2v" class="mono">100 %</span></label><input id="conf2" type="range" min="10" max="100" value="100"></div>
+    <div><label for="size2">Point size <span id="size2v" class="mono">3</span></label><input id="size2" type="range" min="1" max="8" value="3"></div>
+    <label class="check" for="cams2"><input id="cams2" type="checkbox" checked> Predicted cameras</label>
+    <button type="button" class="btn" id="reset2">Reset view</button>
+    <div class="meta" id="meta2">Loading kitchen&hellip;</div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<section class="section" id="results" style="border-top:1px solid var(--line)">
+ <div class="wrap">
+  <div class="eyebrow">Measured</div>
+  <h2>Results</h2>
+  <p class="intro">50 rendered scenes with exact depth, points and cameras (518&times;518 px, 8 views each), evaluated zero-shot with the paper's metrics. The SIFT + 5-point RANSAC baseline is given the true camera intrinsics; VGGT has to estimate them. One Kaggle run on a Tesla T4.</p>
+  <div class="grid2">
+   <div class="chart" id="cPose"><h3>Camera pose accuracy</h3><div class="sub">Area under the accuracy curve of max(rotation, translation-direction) error, all ordered frame pairs</div>
+    <div class="seg" id="poseSeg" style="margin-bottom:6px">
+     <button type="button" data-m="AUC@30" aria-pressed="true">AUC@30</button><button type="button" data-m="AUC@15" aria-pressed="false">AUC@15</button><button type="button" data-m="AUC@5" aria-pressed="false">AUC@5</button><button type="button" data-m="RRA@15" aria-pressed="false">RRA@15</button>
+    </div>
+    <div class="legend"><span><i style="background:var(--signal)"></i>VGGT-1B</span><span><i style="background:var(--sift)"></i>SIFT + 5-pt RANSAC (true K)</span></div>
+    <svg viewBox="0 0 520 250" id="sPose"></svg></div>
+   <div class="chart" id="cRot"><h3>Median rotation error</h3><div class="sub">Degrees, lower is better</div>
+    <div class="legend"><span><i style="background:var(--signal)"></i>VGGT-1B</span><span><i style="background:var(--sift)"></i>SIFT + 5-pt RANSAC (true K)</span></div>
+    <svg viewBox="0 0 520 250" id="sRot"></svg></div>
+   <div class="chart" id="cPts"><h3>Point-map error vs number of views</h3><div class="sub">Mean distance after Sim(3) alignment, scene units (mean point distance 1)</div>
+    <div class="legend"><span><i style="background:var(--signal)"></i>Point head</span><span><i style="background:var(--aux)"></i>Depth + predicted camera</span></div>
+    <svg viewBox="0 0 520 250" id="sPts"></svg></div>
+   <div class="chart" id="cDepth"><h3>Depth error vs number of views</h3><div class="sub">AbsRel after per-sequence median scaling</div>
+    <svg viewBox="0 0 520 250" id="sDepth"></svg></div>
+   <div class="chart" id="cTime"><h3>Inference time</h3><div class="sub">Seconds per forward pass, fp16, 518 px wide, Tesla T4</div>
+    <svg viewBox="0 0 520 250" id="sTime"></svg></div>
+   <div class="chart" id="cMem"><h3>Peak GPU memory</h3><div class="sub">GiB, includes 4.7 GiB of fp32 weights</div>
+    <svg viewBox="0 0 520 250" id="sMem"></svg></div>
+  </div>
+  <div class="tables" id="tables"></div>
+ </div>
+</section>
+<div class="foot"><div class="wrap">Data: Kaggle run of <span class="mono">notebooks/kaggle_vggt.ipynb</span> (version 4, Tesla T4), files <span class="mono">eval_pretrained.json</span>, <span class="mono">timing.json</span>, <span class="mono">equivalence_vggt1b.json</span>. Model weights: <span class="mono">facebook/VGGT-1B</span> (Meta, VGGT License). Example images: official VGGT repository.</div></div>
+<div class="tip" id="tip" role="status"></div>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from "three";
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+
+const RESULTS = {"eval":{"vggt1b/S=2":{"AUC@30":0.7733333333333335,"AUC@15":0.6153333333333333,"AUC@5":0.31399999999999995,"RRA@15":1.0,"RTA@15":0.8700000047683716,"median_rot_err_deg":0.5013395547866821,"median_trans_err_deg":4.127610206604004,"focal_rel_err":0.0774962317943573,"depth_AbsRel":0.044354337882250544,"depth_delta<1.25":0.9681738066673279,"point_err_pointhead":0.020153797821295692,"point_err_depth+cam":0.02048922254854194,"sec_per_scene":0.9666069332434206},"sift_5pt_ransac_gtK/S=2":{"AUC@30":0.43866666666666654,"AUC@15":0.3653333333333334,"AUC@5":0.24400000000000005,"RRA@15":0.6299999952316284,"RTA@15":0.49000000953674316,"median_rot_err_deg":2.8684037206526796,"median_trans_err_deg":16.67130641691416,"failed_pairs":0.12},"vggt1b/S=4":{"AUC@30":0.8498888888888888,"AUC@15":0.7131111111111111,"AUC@5":0.37366666666666665,"RRA@15":1.0,"RTA@15":0.9683333039283752,"median_rot_err_deg":0.480590283870697,"median_trans_err_deg":3.7697296142578125,"focal_rel_err":0.064258613884449,"depth_AbsRel":0.035529228141531345,"depth_delta<1.25":0.9760625767707825,"point_err_pointhead":0.016429593454285792,"point_err_depth+cam":0.017464481850129977,"sec_per_scene":1.9486580624872325},"sift_5pt_ransac_gtK/S=4":{"AUC@30":0.47333333333333333,"AUC@15":0.39455555555555555,"AUC@5":0.23900000000000002,"RRA@15":0.6933333277702332,"RTA@15":0.5216666460037231,"median_rot_err_deg":2.8684037206526796,"median_trans_err_deg":12.17900257004945,"failed_pairs":0.08333333333333333},"vggt1b/S=8":{"AUC@30":0.8492261904761904,"AUC@15":0.7185714285714285,"AUC@5":0.4127142857142857,"RRA@15":1.0,"RTA@15":0.9474999904632568,"median_rot_err_deg":0.5061862468719482,"median_trans_err_deg":3.43827223777771,"focal_rel_err":0.060273963063955306,"depth_AbsRel":0.03202594272792339,"depth_delta<1.25":0.9807211434841157,"point_err_pointhead":0.014207886640693808,"point_err_depth+cam":0.0155917025962946,"sec_per_scene":4.372662787534753},"sift_5pt_ransac_gtK/S=8":{"AUC@30":0.46661904761904766,"AUC@15":0.39050000000000007,"AUC@5":0.2411428571428571,"RRA@15":0.7053571343421936,"RTA@15":0.5099999904632568,"median_rot_err_deg":2.9622269011874796,"median_trans_err_deg":13.738605640729942,"failed_pairs":0.08571428571428572}},"timing":{"gpu":"Tesla T4","dtype":"torch.float16","image_hw":[392,518],"timing":[{"frames":1,"seconds":0.375,"peak_mem_gib":6.84},{"frames":2,"seconds":0.677,"peak_mem_gib":6.98},{"frames":4,"seconds":1.344,"peak_mem_gib":7.54},{"frames":8,"seconds":2.855,"peak_mem_gib":8.66},{"frames":16,"seconds":6.903,"peak_mem_gib":8.96},{"frames":32,"seconds":19.027,"peak_mem_gib":9.58}]},"equiv":{"images":8,"image_hw":[350,518],"gpu":"Tesla T4","outputs":{"pose_enc":{"max_abs_diff":0.0,"max_abs_ref":1.3599145412445068},"depth":{"max_abs_diff":0.0,"max_abs_ref":3.566340923309326},"depth_conf":{"max_abs_diff":0.0,"max_abs_ref":30.29083824157715},"world_points":{"max_abs_diff":0.0,"max_abs_ref":2.8551533222198486},"world_points_conf":{"max_abs_diff":0.0,"max_abs_ref":31.607370376586914},"track":{"max_abs_diff":0.0,"max_abs_ref":509.5416259765625},"vis":{"max_abs_diff":0.0,"max_abs_ref":0.999579131603241},"conf":{"max_abs_diff":0.0,"max_abs_ref":0.998663067817688}}}};
+const $ = (s, r = document) => r.querySelector(s);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+const C = {ink: css("--ink"), ink2: css("--ink-2"), ink3: css("--ink-3"), line: css("--line"), line2: css("--line-2"),
+  panel: css("--panel"), panel2: css("--panel-2"), bg: css("--bg"), signal: css("--signal"), sift: css("--sift"),
+  aux: css("--aux"), frame: css("--frame"), global: css("--global"), first: css("--first")};
+
+/* ================================================================ architecture SVG */
+const NS = "http://www.w3.org/2000/svg";
+const arch = $("#arch");
+function el(tag, attrs, parent = arch, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  parent.appendChild(e); return e;
+}
+const defs = el("defs", {});
+const mk = el("marker", {id: "ah", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse"}, defs);
+el("path", {d: "M0,0 L10,5 L0,10 z", fill: C.ink3}, mk);
+function box(x, y, w, h, title, sub, color, id) {
+  const g = el("g", {id});
+  el("rect", {x, y, width: w, height: h, rx: 10, fill: C.panel, stroke: color, "stroke-width": 2}, g);
+  el("text", {x: x + w / 2, y: y + h / 2 - (sub ? 6 : -6), "text-anchor": "middle", fill: C.ink, "font-family": "Space Grotesk, sans-serif", "font-size": 22, "font-weight": 600}, g, title);
+  if (sub) el("text", {x: x + w / 2, y: y + h / 2 + 20, "text-anchor": "middle", fill: C.ink3, "font-family": "JetBrains Mono, monospace", "font-size": 13}, g, sub);
+  return g;
+}
+function badge(x, y, n) {
+  el("circle", {cx: x, cy: y, r: 15, fill: C.ink}); el("text", {x, y: y + 5, "text-anchor": "middle", fill: C.bg, "font-family": "JetBrains Mono, monospace", "font-size": 15, "font-weight": 700}, arch, n);
+}
+function arrow(d) { el("path", {d, fill: "none", stroke: C.ink3, "stroke-width": 2, "marker-end": "url(#ah)"}); }
+// inputs: three image tiles
+const inG = el("g", {id: "nIn"});
+["img/in_00.jpg", "img/in_01.jpg", "img/in_02.jpg"].forEach((src, i) => {
+  el("image", {href: src, x: 30, y: 150 + i * 115, width: 130, height: 88, preserveAspectRatio: "xMidYMid slice"}, inG);
+  el("rect", {x: 30, y: 150 + i * 115, width: 130, height: 88, fill: "none", stroke: C.line2, "stroke-width": 1.5, rx: 3}, inG);
+});
+el("text", {x: 95, y: 520, "text-anchor": "middle", fill: C.ink3, "font-family": "JetBrains Mono, monospace", "font-size": 14}, inG, "S images");
+box(210, 150, 160, 320, "DINOv2", "normalise · patchify", C.first, "nDino");
+box(410, 150, 170, 320, "Tokens", "cam · reg · patch", "#7f8c99", "nTok");
+const aaG = el("g", {id: "nAA"});
+el("rect", {x: 620, y: 130, width: 250, height: 360, rx: 14, fill: "none", stroke: C.line2, "stroke-width": 2, "stroke-dasharray": "8 6"}, aaG);
+el("text", {x: 745, y: 120, "text-anchor": "middle", fill: C.ink3, "font-family": "JetBrains Mono, monospace", "font-size": 14}, aaG, "Alternating-Attention × 24");
+box(645, 170, 200, 110, "frame-wise", "attention", C.frame, "nFA");
+box(645, 340, 200, 110, "global", "attention", C.global, "nGA");
+arrow("M745 282 L745 336");
+box(950, 40, 230, 100, "Camera head", "adaLN trunk · 4 iters", C.signal, "nCam");
+box(950, 200, 230, 100, "Depth head", "DPT · D, Σᴰ", C.aux, "nDep");
+box(950, 360, 230, 100, "Point head", "DPT · P, Σᴾ", C.aux, "nPts");
+box(950, 520, 230, 100, "Track head", "DPT features · tracker", C.first, "nTrk");
+box(1240, 40, 200, 100, "Pose decode", "g → K, [R|t]", "#7f8c99", "nDec");
+box(1240, 200, 200, 100, "Unproject", "D, K, R, t → X", "#7f8c99", "nUnp");
+// arrows
+[[175, 194], [175, 309], [175, 424]].forEach(([x, y]) => arrow(`M${x - 10} ${y} L205 ${y}`));
+arrow("M372 310 L406 310"); arrow("M582 310 L616 310");
+arrow("M872 310 C905 310 905 90 946 90"); arrow("M872 310 C910 310 910 250 946 250");
+arrow("M872 310 C910 310 910 410 946 410"); arrow("M872 310 C905 310 905 570 946 570");
+arrow("M1182 90 L1236 90"); arrow("M1182 250 L1236 250"); arrow("M1340 142 L1340 196");
+const out = (x, y, t) => el("text", {x, y, fill: C.ink2, "font-family": "JetBrains Mono, monospace", "font-size": 16}, arch, t);
+out(1458, 96, "cameras gᵢ"); out(1458, 256, "points X"); out(1200, 416, "Pᵢ  H×W×3"); out(1200, 576, "Tᵢ  tracks");
+arrow("M1442 90 L1452 90"); arrow("M1442 250 L1452 250");
+badge(290, 140, 1); badge(495, 140, 2); badge(745, 158 - 50, 3); badge(1065, 30, 4); badge(1340, 30, 5); badge(965, 190, 6); badge(1340, 312, 7); badge(1065, 632, 8);
+
+// keyframe views per step [x, y, w, h]
+const VIEWS = [[0, 0, 1600, 640], [10, 120, 380, 400], [180, 110, 420, 400], [380, 110, 420, 400], [600, 90, 300, 420],
+  [930, 0, 530, 170], [930, 170, 300, 160], [1200, 160, 300, 180], [930, 480, 300, 160]];
+const LABELS = ["Architecture", "1 · Inputs", "1 · DINOv2 patchifier", "2 · Tokens", "3 · Alternating-Attention",
+  "4–5 · Camera head and decoding", "6 · DPT depth head", "7 · Unprojection", "8 · Track head"];
+const HIL = [null, ["nIn", "nDino"], ["nDino"], ["nTok"], ["nAA", "nFA", "nGA"], ["nCam", "nDec"], ["nDep", "nPts"], ["nUnp", "nDep", "nDec"], ["nTrk"]];
+const NODES = ["nIn", "nDino", "nTok", "nAA", "nFA", "nGA", "nCam", "nDep", "nPts", "nTrk", "nDec", "nUnp"];
+
+/* ================================================================ detail canvases */
+const details = [...document.querySelectorAll(".detail")];
+const ctxs = details.map(d => d.querySelector("canvas").getContext("2d"));
+function fitCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return {w: r.width, h: r.height, dpr};
+}
+const imgs = {};
+["in_00", "in_01", "in_02", "in_03", "raw_00", "depth_00"].forEach(k => { const im = new Image(); im.src = `img/${k}.jpg`; imgs[k] = im; });
+const ready = k => imgs[k].complete && imgs[k].naturalWidth > 0;
+function label(ctx, t, x, y, col = C.ink3, size = 12, align = "left") {
+  ctx.fillStyle = col; ctx.font = `500 ${size}px JetBrains Mono, monospace`; ctx.textAlign = align; ctx.fillText(t, x, y);
+}
+function fitRect(iw, ih, bw, bh) { const s = Math.min(bw / iw, bh / ih); return [iw * s, ih * s]; }
+
+// histogram of the in_00 image for the normalisation animation
+let hist = null;
+function buildHist() {
+  if (hist || !ready("in_00")) return;
+  const c = document.createElement("canvas"), im = imgs.in_00; c.width = 259; c.height = 175;
+  const x = c.getContext("2d"); x.drawImage(im, 0, 0, 259, 175);
+  const px = x.getImageData(0, 0, 259, 175).data; hist = [[], [], []];
+  for (let i = 0; i < px.length; i += 4) for (let k = 0; k < 3; k++) hist[k].push(px[i + k] / 255);
+}
+const MU = [0.485, 0.456, 0.406], SD = [0.229, 0.224, 0.225];
+
+const draws = [
+  // 0 overview
+  (ctx, w, h, t) => {
+    const n = 4, tw = Math.min(150, (w - 80) / 6), th = tw * 0.676, y0 = h * 0.18;
+    for (let i = 0; i < n; i++) if (ready("in_0" + i)) ctx.drawImage(imgs["in_0" + i], 24 + i * (tw * 0.42), y0 + i * 10, tw, th);
+    label(ctx, "S = 2 … hundreds", 24, y0 + th + 52);
+    const cx = w * 0.5, pulse = (Math.sin(t * 2) + 1) / 2;
+    ctx.strokeStyle = C.signal; ctx.lineWidth = 2; ctx.globalAlpha = 0.5 + 0.5 * pulse;
+    ctx.strokeRect(cx - 50, y0 + 6, 100, th); ctx.globalAlpha = 1;
+    label(ctx, "1 pass", cx, y0 + th / 2 + 10, C.ink, 14, "center");
+    const outs = [["cameras", C.signal], ["depth maps", C.aux], ["point map", C.aux], ["tracks", C.first]];
+    outs.forEach(([s, c], i) => { ctx.fillStyle = c; ctx.fillRect(w * 0.72, y0 + i * 26, 10, 10); label(ctx, s, w * 0.72 + 18, y0 + i * 26 + 10, C.ink2, 13); });
+    ctx.strokeStyle = C.ink3; ctx.beginPath(); ctx.moveTo(24 + 3 * tw * 0.42 + tw + 10, y0 + th / 2); ctx.lineTo(cx - 56, y0 + th / 2);
+    ctx.moveTo(cx + 54, y0 + th / 2); ctx.lineTo(w * 0.72 - 10, y0 + th / 2); ctx.stroke();
+  },
+  // 1 inputs: resize + normalisation histogram
+  (ctx, w, h, t) => {
+    buildHist();
+    const pad = 18, half = w * 0.52, ph = h * 0.48;
+    const k = (Math.sin(t * 0.9) + 1) / 2, kk = smooth(0.15, 0.85, k);
+    if (ready("raw_00")) {
+      const [rw, rh] = fitRect(779, 520, half * 0.42, ph * 0.9), [cw, chh] = fitRect(518, 350, half * 0.42 * 0.78, ph * 0.9 * 0.78);
+      ctx.drawImage(imgs.raw_00, pad, pad + 14, rw, rh); label(ctx, "779 × 520 (raw)", pad, pad + 8);
+      const x2 = pad + rw + 40; ctx.strokeStyle = C.ink3; ctx.beginPath(); ctx.moveTo(pad + rw + 8, pad + 14 + rh / 2); ctx.lineTo(x2 - 8, pad + 14 + rh / 2); ctx.stroke();
+      ctx.drawImage(imgs.in_00, x2, pad + 14, cw, chh); label(ctx, "518 × 350", x2, pad + 8, C.ink);
+      // patch-size ticks along the cropped image
+      ctx.strokeStyle = C.first; ctx.globalAlpha = 0.6; ctx.lineWidth = 1;
+      for (let i = 0; i <= 25; i += 5) { const yy = pad + 14 + chh * i / 25; ctx.beginPath(); ctx.moveTo(x2 + cw + 3, yy); ctx.lineTo(x2 + cw + 9, yy); ctx.stroke(); }
+      ctx.globalAlpha = 1; label(ctx, "350 = 25 × 14", x2, pad + 14 + chh + 16, C.first, 11);
+      label(ctx, "height = round(520 · 518/779 / 14) · 14", pad, pad + 14 + rh + 34, C.ink3, 11);
+    }
+    // histograms R G B, morphing from [0,1] to standardised values
+    const gx = half + 10, gw = w - gx - pad, gy = pad + 14, gh = h - gy - 40;
+    label(ctx, kk < 0.5 ? "pixel values x ∈ [0, 1]" : "standardised (x − μ) / σ", gx, pad + 8, C.ink);
+    const lo = lerp(0, -2.2, kk), hi = lerp(1, 2.7, kk);
+    ctx.strokeStyle = C.line2; ctx.beginPath(); ctx.moveTo(gx, gy + gh); ctx.lineTo(gx + gw, gy + gh); ctx.stroke();
+    const zero = gx + (0 - lo) / (hi - lo) * gw; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(zero, gy); ctx.lineTo(zero, gy + gh); ctx.stroke(); ctx.setLineDash([]);
+    label(ctx, "0", zero, gy + gh + 14, C.ink3, 11, "center");
+    label(ctx, lo.toFixed(1), gx, gy + gh + 14, C.ink3, 11); label(ctx, hi.toFixed(1), gx + gw, gy + gh + 14, C.ink3, 11, "right");
+    if (hist) {
+      const cols = ["#e66767", "#0ca30c", "#3987e5"], bins = 40;
+      for (let c = 0; c < 3; c++) {
+        const raw = new Array(bins).fill(0);
+        for (const v of hist[c]) { const z = lerp(v, (v - MU[c]) / SD[c], kk); const b = Math.floor((z - lo) / (hi - lo) * bins); if (b >= 0 && b < bins) raw[b]++; }
+        const hs = raw.map((v, i) => (raw[i - 1] ?? v) * 0.25 + v * 0.5 + (raw[i + 1] ?? v) * 0.25);
+        const mx = Math.max(...hs); ctx.strokeStyle = cols[c]; ctx.lineWidth = 2; ctx.beginPath();
+        hs.forEach((v, i) => { const xx = gx + (i + 0.5) / bins * gw, yy = gy + gh - v / mx * gh * 0.92; i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }); ctx.stroke();
+      }
+    }
+    label(ctx, "R  G  B channel histograms of frame 1", gx, h - 14, C.ink3, 11);
+  },
+  // 2 patchify
+  (ctx, w, h, t, p) => {
+    if (!ready("in_00")) return;
+    const pad = 18, [iw, ih] = fitRect(518, 350, w * 0.56, h - 2 * pad - 20), x0 = pad, y0 = pad + 6;
+    ctx.drawImage(imgs.in_00, x0, y0, iw, ih);
+    const cw = iw / 37, chh = ih / 25, nshow = Math.floor(clamp((t % 6) / 2.5) * 925);
+    ctx.strokeStyle = "rgba(237,161,0,0.55)"; ctx.lineWidth = 1;
+    for (let i = 0; i < nshow; i++) { const r = Math.floor(i / 37), c = i % 37; ctx.strokeRect(x0 + c * cw, y0 + r * chh, cw, chh); }
+    const idx = Math.floor((t * 5) % 925), r = Math.floor(idx / 37), c = idx % 37;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2; ctx.strokeRect(x0 + c * cw, y0 + r * chh, cw, chh);
+    // token column
+    const tx = x0 + iw + 46, tw = Math.min(150, w - tx - pad);
+    label(ctx, `patch (${r + 1}, ${c + 1})`, tx, y0 + 10, C.ink, 12);
+    label(ctx, "14×14×3 → 1024", tx, y0 + 28, C.ink3, 11);
+
+    ctx.strokeStyle = C.ink3; ctx.beginPath(); ctx.moveTo(x0 + (c + 1) * cw, y0 + (r + 0.5) * chh); ctx.lineTo(tx - 6, y0 + 60); ctx.stroke();
+    let seed = idx * 9301 + 49297;
+    for (let k = 0; k < 32; k++) { seed = (seed * 9301 + 49297) % 233280; const v = seed / 233280;
+      ctx.fillStyle = `hsl(${210 + v * 40}, 60%, ${25 + v * 45}%)`; ctx.fillRect(tx, y0 + 44 + k * ((ih - 50) / 32), tw * (0.25 + 0.75 * v), (ih - 50) / 32 - 1); }
+    label(ctx, `${Math.min(nshow, 925)} / 925 patches`, x0, y0 + ih + 18, C.first, 12);
+  },
+  // 3 tokens
+  (ctx, w, h, t) => {
+    const pad = 18, rows = 4, np = 14, cell = Math.min(24, (w - 2 * pad - 90) / (5 + np + 2)), gap = 3;
+    for (let f = 0; f < rows; f++) {
+      const y = pad + 26 + f * (cell * 1.9 + 8);
+      label(ctx, `frame ${f + 1}`, pad, y + cell * 0.7, f === 0 ? C.first : C.ink3, 12);
+      let x = pad + 74;
+      const special = f === 0 ? C.first : "#7f8c99";
+      ctx.fillStyle = special; ctx.fillRect(x, y, cell, cell); if (f === 0) label(ctx, "cam", x + cell / 2, y - 6, C.ink3, 10, "center"); x += cell + gap;
+      for (let k = 0; k < 4; k++) { ctx.fillStyle = special; ctx.globalAlpha = 0.55; ctx.fillRect(x, y, cell, cell); ctx.globalAlpha = 1; x += cell + gap; }
+      if (f === 0) label(ctx, "4 registers", x - 2.5 * (cell + gap), y - 6, C.ink3, 10, "center");
+      x += 6;
+      for (let k = 0; k < np; k++) {
+        const pulse = (Math.sin(t * 2 - k * 0.4 - f) + 1) / 2;
+        ctx.fillStyle = `rgba(57,135,229,${0.35 + 0.45 * pulse})`; ctx.fillRect(x, y, cell, cell); x += cell + gap; }
+      label(ctx, "… 925", x + 4, y + cell * 0.7, C.ink3, 11);
+      if (f === 0) label(ctx, "patch tokens", x - np * (cell + gap) / 2, y - 6, C.ink3, 10, "center");
+    }
+    const yb = pad + 26 + rows * (cell * 1.9 + 8) + 8;
+    label(ctx, "RoPE position:  special (0, 0)   patch at row r, column c → (r+1, c+1)", pad, yb, C.ink2, 12);
+    label(ctx, "frame 1: learned slot 0  ·  frames 2…S: shared slot 1", pad, yb + 20, C.first, 12);
+  },
+  // 4 alternating attention
+  (ctx, w, h, t) => {
+    const pad = 18, rows = 4, n = 16, cell = Math.min(20, (w - 2 * pad - 70) / (n + 1)), gap = 4;
+    const period = 2.6, phase = Math.floor(t / period) % 2, local = (t % period) / period, layer = (Math.floor(t / (2 * period)) % 24) + 1;
+    const pos = [];
+    for (let f = 0; f < rows; f++) { const y = pad + 40 + f * (cell * 2.2 + 10); pos.push(y);
+      label(ctx, `frame ${f + 1}`, pad, y + cell * 0.75, C.ink3, 12);
+      for (let k = 0; k < n; k++) { ctx.fillStyle = k === 0 ? "#7f8c99" : "rgba(57,135,229,0.45)"; ctx.fillRect(pad + 64 + k * (cell + gap), y, cell, cell); } }
+    const qf = 1, qk = 6, qx = pad + 64 + qk * (cell + gap) + cell / 2, qy = pos[qf] + cell / 2;
+    const col = phase === 0 ? C.frame : C.global, a = Math.min(1, local * 2.2);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.75;
+    for (let f = 0; f < rows; f++) { if (phase === 0 && f !== qf) continue;
+      for (let k = 0; k < n; k += (phase === 0 ? 1 : 2)) { if (f === qf && k === qk) continue;
+        const x = pad + 64 + k * (cell + gap) + cell / 2, y = pos[f] + cell / 2;
+        ctx.beginPath(); ctx.moveTo(qx, qy); const mx = (qx + x) / 2, my = f === qf ? qy - 28 - Math.abs(k - qk) * 3 : (qy + y) / 2;
+        ctx.quadraticCurveTo(lerp(qx, mx, a), lerp(qy, my, a), lerp(qx, x, a), lerp(qy, y, a)); ctx.stroke(); } }
+    ctx.globalAlpha = 1; ctx.fillStyle = C.ink; ctx.fillRect(qx - cell / 2, qy - cell / 2, cell, cell);
+    label(ctx, phase === 0 ? "frame-wise block: tokens (B·S, P, C)" : "global block: tokens (B, S·P, C)", pad, pad + 14, col, 13);
+    label(ctx, `layer ${layer} / 24`, w - pad, pad + 14, C.ink2, 13, "right");
+    const yb = pos[rows - 1] + cell + 30;
+    label(ctx, "kept for the heads: layers 4, 11, 17, 23 → [frame ‖ global] = 2048 channels", pad, yb, C.ink3, 11);
+  },
+  // 5 camera head (illustration with the predicted cameras)
+  (ctx, w, h, t) => {
+    if (!camData) return;
+    const pad = 18, it = Math.min(4, Math.floor((t % 6) / 1.2) + 1), frac = smooth(0, 0.7, ((t % 6) % 1.2) / 1.2);
+    const show = Math.min(8, camData.extrinsics.length), cx = w * 0.55, cy = h * 0.55, sc = Math.min(w, h) * 0.32;
+    const yaw = 0.6 + 0.25 * Math.sin(t * 0.3), pitch = -0.55;
+    const proj = (X) => { // simple orbit camera: rotate world then orthographic-ish perspective
+      let [x, y, z] = X; z -= 1.2; const cxr = Math.cos(yaw), sxr = Math.sin(yaw);
+      [x, z] = [cxr * x + sxr * z, -sxr * x + cxr * z]; const cp = Math.cos(pitch), sp = Math.sin(pitch);
+      [y, z] = [cp * y - sp * z, sp * y + cp * z]; const d = 4 / (4 + z); return [cx + x * sc * d, cy + y * sc * d]; };
+    label(ctx, `refinement iteration ${it} / 4`, pad, pad + 14, C.signal, 13);
+    label(ctx, "g⁽ᵏ⁾ = g⁽ᵏ⁻¹⁾ + Δg", pad, pad + 34, C.ink2, 12);
+    for (let i = 0; i < show; i++) {
+      const E = camData.extrinsics[i], R = [E[0].slice(0, 3), E[1].slice(0, 3), E[2].slice(0, 3)], tt = [E[0][3], E[1][3], E[2][3]];
+      const Cw = [0, 1, 2].map(r => -(R[0][r] * tt[0] + R[1][r] * tt[1] + R[2][r] * tt[2]));
+      const s = clamp((it - 1 + frac) / 4 + 0.0001), ss = 1 - Math.pow(1 - s, 2);
+      const C0 = [0, 0, 0], Cc = Cw.map((v, k) => lerp(C0[k], v, ss));
+      const fw = 0.12, corners = [[-fw, -fw * 0.7, 0.2], [fw, -fw * 0.7, 0.2], [fw, fw * 0.7, 0.2], [-fw, fw * 0.7, 0.2]].map(q =>
+        [0, 1, 2].map(r => Cc[r] + R[0][r] * q[0] + R[1][r] * q[1] + R[2][r] * q[2]));
+      const P0 = proj(Cc), Pc = corners.map(proj);
+      ctx.strokeStyle = i === 0 ? C.first : C.signal; ctx.lineWidth = 1.5; ctx.beginPath();
+      Pc.forEach(p => { ctx.moveTo(P0[0], P0[1]); ctx.lineTo(p[0], p[1]); });
+      ctx.moveTo(Pc[0][0], Pc[0][1]); Pc.forEach(p => ctx.lineTo(p[0], p[1])); ctx.lineTo(Pc[0][0], Pc[0][1]); ctx.stroke();
+    }
+    label(ctx, "frame 1 (reference, identity)", pad, h - 30, C.first, 11);
+    label(ctx, "frames 2–8", pad, h - 14, C.signal, 11);
+  },
+  // 6 DPT pyramid + depth reveal
+  (ctx, w, h, t) => {
+    const pad = 18, lv = [[100, 148, "×4"], [50, 74, "×2"], [25, 37, "×1"], [13, 19, "×½"]], s = Math.min(0.62, (h - 60) / 220);
+    let y = pad + 20; label(ctx, "reassemble", pad, pad + 8, C.ink3, 11);
+    const lvx = pad, mid = [];
+    lv.forEach(([hh, ww, tag], i) => { const bw = ww * s, bh = hh * s;
+      ctx.strokeStyle = C.aux; ctx.lineWidth = 1.5; ctx.strokeRect(lvx, y, bw, bh); ctx.fillStyle = "rgba(25,158,112,0.12)"; ctx.fillRect(lvx, y, bw, bh);
+      label(ctx, `${tag}  ${hh}×${ww}`, lvx + bw + 8, y + Math.min(bh, 16) - 2, C.ink2, 11); mid.push([lvx + bw, y + bh / 2]); y += bh + 10; });
+    const fx = pad + 148 * s + 96, k = (Math.sin(t * 0.8) + 1) / 2;
+    ctx.strokeStyle = C.ink3; mid.forEach(([x, yy]) => { ctx.beginPath(); ctx.moveTo(x + 70, yy); ctx.lineTo(fx - 8, h * 0.45); ctx.stroke(); });
+    label(ctx, "fuse coarse → fine", fx - 4, pad + 8, C.ink3, 11);
+    if (ready("in_00") && ready("depth_00")) {
+      const [iw, ih] = fitRect(518, 350, w - fx - pad, h - pad * 2 - 30), x0 = fx, y0 = pad + 16;
+      ctx.drawImage(imgs.in_00, x0, y0, iw, ih);
+      const cut = iw * smooth(0.1, 0.9, k);
+      ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, cut, ih); ctx.clip(); ctx.drawImage(imgs.depth_00, x0, y0, iw, ih); ctx.restore();
+      ctx.strokeStyle = C.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0 + cut, y0); ctx.lineTo(x0 + cut, y0 + ih); ctx.stroke();
+      label(ctx, "predicted depth (red = near)", x0, y0 + ih + 16, C.ink2, 11);
+    }
+  },
+];
+
+/* ================================================================ WebGL (story stage + explorer) */
+let camData = null;
+fetch("data/kitchen_cams.json").then(r => r.json()).then(d => camData = d).catch(() => {});
+const sceneCache = {};
+function loadScene(name) {
+  if (!sceneCache[name]) sceneCache[name] = fetch(`data/scene_${name}.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(decodeScene);
+  return sceneCache[name];
+}
+function b64(s, T) { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new T(u.buffer); }
+function decodeScene(S) {
+  const q = b64(S.xyz, Int16Array), rgb = b64(S.rgb, Uint8Array), cf = b64(S.conf, Uint8Array);
+  const pos = new Float32Array(S.n * 3), col = new Float32Array(S.n * 3), conf = new Float32Array(S.n), flat = new Float32Array(S.n * 3);
+  const zs = [];
+  for (let i = 0; i < S.n; i++) for (let k = 0; k < 3; k++) { pos[3 * i + k] = S.lo[k] + (q[3 * i + k] + 32768) / 65535 * (S.hi[k] - S.lo[k]); col[3 * i + k] = Math.pow(rgb[3 * i + k] / 255, 2.2); }
+  for (let i = 0; i < S.n; i++) { conf[i] = cf[i] / 255; if (i % 50 === 0) zs.push(pos[3 * i + 2]); }
+  zs.sort((a, b) => a - b); const z0 = zs[zs.length >> 1] || 1;
+  // image plane of camera 1 (= world frame): the pixel ray at a fixed depth z0
+  for (let i = 0; i < S.n; i++) { const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
+    if (z > 0.05) { flat[3 * i] = x / z * z0; flat[3 * i + 1] = y / z * z0; flat[3 * i + 2] = z0; } else { flat[3 * i] = x; flat[3 * i + 1] = y; flat[3 * i + 2] = z; } }
+  return {...S, pos, col, conf, flat, z0};
+}
+const VERT = `attribute vec3 flatPos; attribute float conf; uniform float lift, size, scale, thr; varying vec3 vC; varying float vK;
+  void main(){ vC = color; vK = conf >= thr ? 1.0 : 0.0; vec3 p = mix(flatPos, position, lift); vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_PointSize = vK > 0.5 ? clamp(size * scale / -mv.z, 1.0, 10.0) : 0.0; gl_Position = projectionMatrix * mv; }`;
+const FRAG = `varying vec3 vC; varying float vK; void main(){ if (vK < 0.5) discard; vec2 d = gl_PointCoord - 0.5; if (dot(d, d) > 0.25) discard;
+  gl_FragColor = vec4(vC, 1.0); }`;
+function makePoints(S) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(S.pos, 3)); g.setAttribute("color", new THREE.BufferAttribute(S.col, 3));
+  g.setAttribute("flatPos", new THREE.BufferAttribute(S.flat, 3)); g.setAttribute("conf", new THREE.BufferAttribute(S.conf, 1));
+  const m = new THREE.ShaderMaterial({vertexShader: VERT, fragmentShader: FRAG, vertexColors: true,
+    uniforms: {lift: {value: 1}, size: {value: 0.01}, scale: {value: 400}, thr: {value: 0}}});
+  return new THREE.Points(g, m);
+}
+function makeCams(S, size) {
+  const grp = new THREE.Group();
+  S.cams.forEach((c, i) => {
+    const M = new THREE.Matrix4().set(...c.c2w[0], ...c.c2w[1], ...c.c2w[2], 0, 0, 0, 1);
+    const d = size * 0.05, w = S.W / 2 / c.fx * d, h = S.H / 2 / c.fy * d;
+    const k = [[-w, -h, d], [w, -h, d], [w, h, d], [-w, h, d]].map(p => new THREE.Vector3(...p).applyMatrix4(M)), o = new THREE.Vector3().applyMatrix4(M), v = [];
+    k.forEach(p => v.push(o, p)); for (let j = 0; j < 4; j++) v.push(k[j], k[(j + 1) % 4]);
+    grp.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({color: i === 0 ? C.first : C.signal})));
+  });
+  return grp;
+}
+function makeTracks(S) {
+  const grp = new THREE.Group(); if (!S.tracks) return grp;
+  for (const tr of S.tracks) { const pts = tr.filter(p => Math.abs(p[0]) < 1e8).map(p => new THREE.Vector3(...p)); if (pts.length < 2) continue;
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: C.first}))); }
+  return grp;
+}
+function webgl(canvas) { try { return new THREE.WebGLRenderer({canvas, antialias: true, alpha: false}); } catch (e) { return null; } }
+
+// story renderer
+const glCanvas = $("#gl"), R1 = webgl(glCanvas);
+const scene1 = new THREE.Scene(), cam1 = new THREE.PerspectiveCamera(50, 1, 0.01, 100), world1 = new THREE.Group();
+world1.scale.set(1, -1, -1); scene1.add(world1);
+let story = null;
+if (R1) { R1.setPixelRatio(Math.min(devicePixelRatio, 2)); scene1.background = new THREE.Color(C.bg);
+  loadScene("kitchen").then(S => { const pts = makePoints(S), cams = makeCams(S, S.fit ? S.fit.size : 3), trk = makeTracks(S);
+    world1.add(pts, cams, trk); story = {S, pts, cams, trk}; }).catch(() => {}); }
+
+/* ================================================================ scroll-driven stage */
+const stepsEl = [...document.querySelectorAll(".step")], N = stepsEl.length;
+let curView = VIEWS[0].slice(), sPos = 0, lastHL = null;
+function storyPos() {
+  const vh = innerHeight, r0 = stepsEl[0].getBoundingClientRect(), stepH = stepsEl[0].offsetHeight || vh;
+  const mobile = innerWidth <= 860, anchor = mobile ? vh * 0.8 : vh / 2;
+  return clamp((anchor - r0.top - stepH / 2) / stepH, 0, N - 1);
+}
+function viewAt(s) {
+  const k = Math.min(N - 2, Math.floor(s)), t = smooth(0.25, 0.75, s - k);
+  const A = VIEWS[k], B = VIEWS[k + 1], O = VIEWS[0];
+  if (k === 0) return A.map((a, i) => lerp(a, B[i], t));
+  if (t < 0.5) { const u = t * 2; return A.map((a, i) => lerp(a, O[i], u)); }
+  const u = (t - 0.5) * 2; return O.map((o, i) => lerp(o, B[i], u));
+}
+function highlight(ids) {
+  if (ids === lastHL) return; lastHL = ids;
+  NODES.forEach(n => { const g = document.getElementById(n); if (!g) return; const on = !ids || ids.includes(n);
+    g.style.transition = reduce ? "none" : "opacity .3s"; g.style.opacity = on ? 1 : 0.28;
+    g.querySelectorAll(":scope > rect").forEach(r => r.setAttribute("stroke-width", ids && on && n !== "nIn" ? 4 : 2)); });
+}
+const trackImg = $("#trackImg"), trackLbl = $("#trackLbl"), inset = $("#trackInset");
+let trackFrame = -1;
+function frame(now) {
+  const t = now / 1000;
+  sPos = storyPos();
+  const target = viewAt(sPos);
+  curView = reduce ? target : curView.map((v, i) => lerp(v, target[i], 0.18));
+  arch.setAttribute("viewBox", curView.map(v => v.toFixed(1)).join(" "));
+  const near = Math.round(sPos);
+  $("#stepLabel").textContent = LABELS[near];
+  highlight(HIL[near]);
+  // 2D details
+  details.forEach((d, i) => {
+    const vis = clamp(1 - Math.abs(sPos - i) * 2.2);
+    d.style.opacity = vis.toFixed(3);
+    if (vis > 0.01 && draws[i]) { const cv = d.querySelector("canvas"), {w, h, dpr} = fitCanvas(cv), ctx = ctxs[i];
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); draws[i](ctx, w, h, reduce ? 2 : t, sPos - i); }
+  });
+  // WebGL stage for steps 7 and 8
+  const glVis = clamp(1 - Math.max(0, 6.55 - sPos) * 2.2) * (sPos <= N - 1 ? 1 : 0);
+  glCanvas.style.opacity = glVis.toFixed(3);
+  const insVis = clamp(1 - Math.abs(sPos - 8) * 2.2); inset.style.opacity = insVis.toFixed(3);
+  if (insVis > 0.01) { const f = Math.floor(t * 1.4) % 6; if (f !== trackFrame) { trackFrame = f; trackImg.src = `img/track_${String(f).padStart(2, "0")}.jpg`; trackLbl.textContent = `frame ${f * 4 + 1}`; } }
+  if (R1 && story && glVis > 0.01) {
+    const box = glCanvas.getBoundingClientRect(); R1.setSize(box.width, box.height, false); cam1.aspect = box.width / Math.max(1, box.height); cam1.updateProjectionMatrix();
+    const lift = reduce ? (sPos > 7 ? 1 : 0) : smooth(6.6, 7.35, sPos);
+    const m = story.pts.material.uniforms; m.lift.value = lift; m.scale.value = box.height / (2 * Math.tan(cam1.fov * Math.PI / 360));
+    const fit = story.S.fit || {center: [0, 0, 1], size: 3}, sz = fit.size; m.size.value = sz * 0.004;
+    story.cams.visible = sPos > 7.4; story.trk.visible = sPos > 7.6;
+    // camera: start behind camera 1 looking along its axis, then swing to the side as the points lift
+    const c = new THREE.Vector3(fit.center[0], -fit.center[1], -fit.center[2]);
+    const swing = smooth(6.9, 8.2, sPos) * 0.9 + (reduce ? 0 : 0.08 * Math.sin(t * 0.4));
+    const r = sz * 0.5, eye =new THREE.Vector3(c.x + Math.sin(swing) * r, c.y + sz * 0.12 + swing * sz * 0.15, c.z + Math.cos(swing) * r);
+    cam1.position.copy(lerpV(new THREE.Vector3(0, 0, sz * 0.15), eye, smooth(6.6, 7.6, sPos))); cam1.lookAt(c);
+    R1.render(scene1, cam1);
+  }
+  requestAnimationFrame(frame);
+}
+const lerpV = (a, b, t) => a.clone().lerp(b, t);
+requestAnimationFrame(frame);
+
+/* ================================================================ explorer */
+const glCanvas2 = $("#gl2"), R2 = webgl(glCanvas2);
+const scene2 = new THREE.Scene(), cam2 = new THREE.PerspectiveCamera(55, 1, 0.01, 200), world2 = new THREE.Group();
+world2.scale.set(1, -1, -1); scene2.add(world2); scene2.background = new THREE.Color(C.bg);
+let ex = null, controls = null;
+if (R2) {
+  R2.setPixelRatio(Math.min(devicePixelRatio, 2)); controls = new OrbitControls(cam2, glCanvas2); controls.enableDamping = true;
+  const resize2 = () => { const b = glCanvas2.getBoundingClientRect(); R2.setSize(b.width, b.height, false); cam2.aspect = b.width / Math.max(1, b.height); cam2.updateProjectionMatrix(); };
+  addEventListener("resize", resize2); resize2();
+  const loop = () => { controls.update(); if (ex) { const u = ex.pts.material.uniforms; u.scale.value = glCanvas2.getBoundingClientRect().height / (2 * Math.tan(cam2.fov * Math.PI / 360)); }
+    R2.render(scene2, cam2); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+  showScene("kitchen");
+} else { $("#meta2").textContent = "WebGL is not available in this browser, so the 3D view cannot be shown."; }
+function fitView() {
+  if (!ex) return; const f = ex.S.fit || {center: [0, 0, 1], size: 3}, c = new THREE.Vector3(f.center[0], -f.center[1], -f.center[2]);
+  controls.target.copy(c); cam2.position.set(c.x, c.y + f.size * 0.25, c.z + f.size * 0.85); cam2.up.set(0, 1, 0); controls.update();
+}
+function applyEx() {
+  if (!ex) return; const u = ex.pts.material.uniforms, keep = +$("#conf2").value / 100, size = +$("#size2").value;
+  u.thr.value = 1 - keep; u.size.value = (ex.S.fit ? ex.S.fit.size : 3) * 0.0016 * size; ex.cams.visible = $("#cams2").checked;
+  $("#conf2v").textContent = `${Math.round(keep * 100)} %`; $("#size2v").textContent = size;
+}
+function showScene(name) {
+  document.querySelectorAll("#sceneSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.s === name)));
+  $("#meta2").textContent = `Loading ${name.replace("llff_", "")}…`;
+  loadScene(name).then(S => {
+    world2.clear(); const pts = makePoints(S), cams = makeCams(S, S.fit ? S.fit.size : 3); world2.add(pts, cams); ex = {S, pts, cams};
+    applyEx(); fitView();
+    $("#meta2").innerHTML = `${S.cams.length} images · ${S.n.toLocaleString()} points shown<br>${S.H}×${S.W} px input · first camera in yellow`;
+  }).catch(() => { $("#meta2").textContent = "Could not load this scene's data file."; });
+}
+$("#sceneSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (b) showScene(b.dataset.s); });
+["conf2", "size2", "cams2"].forEach(id => $("#" + id).addEventListener("input", applyEx));
+$("#reset2").addEventListener("click", fitView);
+
+/* ================================================================ charts */
+const E = RESULTS.eval, VIEWS_S = [2, 4, 8];
+const tip = $("#tip");
+function showTip(ev, html) { tip.innerHTML = html; tip.style.opacity = 1; const x = Math.min(innerWidth - 250, ev.clientX + 14), y = ev.clientY + 14; tip.style.left = x + "px"; tip.style.top = y + "px"; }
+function hideTip() { tip.style.opacity = 0; }
+function svgEl(svg, tag, a, text) { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (text !== undefined) e.textContent = text; svg.appendChild(e); return e; }
+const AX = {l: 46, r: 12, t: 12, b: 34, W: 520, H: 250};
+function axes(svg, yMax, ticks, fmt, xLabels, xTitle) {
+  svg.innerHTML = ""; const ih = AX.H - AX.t - AX.b, iw = AX.W - AX.l - AX.r;
+  ticks.forEach(v => { const y = AX.t + ih - v / yMax * ih;
+    svgEl(svg, "line", {x1: AX.l, x2: AX.W - AX.r, y1: y, y2: y, stroke: C.line, "stroke-width": 1});
+    svgEl(svg, "text", {x: AX.l - 8, y: y + 4, "text-anchor": "end", fill: C.ink3, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(v)); });
+  if (xTitle) svgEl(svg, "text", {x: AX.l + iw / 2, y: AX.H - 2, "text-anchor": "middle", fill: C.ink3, "font-size": 11, "font-family": "Inter, sans-serif"}, xTitle);
+  return {ih, iw, y: v => AX.t + ih - v / yMax * ih};
+}
+function rbar(x, y, w, h) { const r = Math.min(4, w / 2, h); return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`; }
+function groupedBars(svg, metric, fmt, yMax, ticks, unit = "") {
+  const g = axes(svg, yMax, ticks, fmt, null, "number of input views");
+  const gw = g.iw / 3, bw = Math.min(46, gw * 0.3);
+  VIEWS_S.forEach((S, i) => {
+    const cx = AX.l + gw * (i + 0.5);
+    svgEl(svg, "text", {x: cx, y: AX.H - AX.b + 16, "text-anchor": "middle", fill: C.ink2, "font-size": 12, "font-family": "JetBrains Mono, monospace"}, `S = ${S}`);
+    [["vggt1b", C.signal, "VGGT-1B", -1], ["sift_5pt_ransac_gtK", C.sift, "SIFT + RANSAC", 1]].forEach(([key, col, name, side]) => {
+      const v = E[`${key}/S=${S}`][metric], x = cx + (side < 0 ? -bw - 1 : 1), y = g.y(v), h = AX.t + g.ih - y;
+      const p = svgEl(svg, "path", {d: rbar(x, y, bw, Math.max(h, 0.5)), fill: col});
+      svgEl(svg, "text", {x: x + bw / 2, y: y - 5, "text-anchor": "middle", fill: C.ink2, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(v) + unit);
+      const hit = svgEl(svg, "rect", {x: x - 2, y: AX.t, width: bw + 4, height: g.ih, fill: "transparent"});
+      hit.addEventListener("pointermove", e => showTip(e, `<b>${name}</b>, ${S} views<br>${metric}: <b>${fmt(v)}${unit}</b>`)); hit.addEventListener("pointerleave", hideTip);
+    });
+  });
+}
+function lines(svg, series, yMax, ticks, fmt, xs, xLabel, xTitle, logx = false) {
+  const g = axes(svg, yMax, ticks, fmt, null, xTitle);
+  const xpos = v => { const a = logx ? Math.log2(xs[0]) : xs[0], b = logx ? Math.log2(xs[xs.length - 1]) : xs[xs.length - 1], u = ((logx ? Math.log2(v) : v) - a) / (b - a); return AX.l + 24 + u * (g.iw - 48); };
+  xs.forEach(v => svgEl(svg, "text", {x: xpos(v), y: AX.H - AX.b + 16, "text-anchor": "middle", fill: C.ink2, "font-size": 12, "font-family": "JetBrains Mono, monospace"}, xLabel(v)));
+  series.forEach(({vals, color, name}) => {
+    const d = vals.map((v, i) => `${i ? "L" : "M"}${xpos(xs[i]).toFixed(1)},${g.y(v).toFixed(1)}`).join(" ");
+    svgEl(svg, "path", {d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round"});
+    vals.forEach((v, i) => { const cx = xpos(xs[i]), cy = g.y(v);
+      svgEl(svg, "circle", {cx, cy, r: 4.5, fill: color, stroke: C.panel, "stroke-width": 2});
+      const hit = svgEl(svg, "circle", {cx, cy, r: 14, fill: "transparent"});
+      hit.addEventListener("pointermove", e => showTip(e, `<b>${name}</b><br>${xLabel(xs[i])}: <b>${fmt(v)}</b>`)); hit.addEventListener("pointerleave", hideTip); });
+    const last = vals.length - 1; svgEl(svg, "text", {x: xpos(xs[last]) + 8, y: g.y(vals[last]) - 8, "text-anchor": "end", fill: C.ink2, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(vals[last]));
+  });
+}
+let poseMetric = "AUC@30";
+function drawPose() { groupedBars($("#sPose"), poseMetric, v => v.toFixed(2), 1, [0, 0.25, 0.5, 0.75, 1]); }
+$("#poseSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; poseMetric = b.dataset.m;
+  document.querySelectorAll("#poseSeg button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); drawPose(); });
+drawPose();
+groupedBars($("#sRot"), "median_rot_err_deg", v => v.toFixed(2), 3.5, [0, 1, 2, 3], "°");
+lines($("#sPts"), [{vals: VIEWS_S.map(S => E[`vggt1b/S=${S}`].point_err_pointhead), color: C.signal, name: "Point head"},
+  {vals: VIEWS_S.map(S => E[`vggt1b/S=${S}`]["point_err_depth+cam"]), color: C.aux, name: "Depth + camera"}],
+  0.025, [0, 0.005, 0.01, 0.015, 0.02, 0.025], v => v.toFixed(3), VIEWS_S, v => `${v} views`, "number of input views");
+lines($("#sDepth"), [{vals: VIEWS_S.map(S => E[`vggt1b/S=${S}`].depth_AbsRel), color: C.signal, name: "VGGT-1B depth AbsRel"}],
+  0.05, [0, 0.01, 0.02, 0.03, 0.04, 0.05], v => v.toFixed(3), VIEWS_S, v => `${v} views`, "number of input views");
+const T = RESULTS.timing.timing, TX = T.map(r => r.frames);
+lines($("#sTime"), [{vals: T.map(r => r.seconds), color: C.signal, name: "Forward pass"}], 20, [0, 5, 10, 15, 20], v => v.toFixed(v < 10 ? 2 : 1) + " s", TX, v => String(v), "number of frames (log scale)", true);
+lines($("#sMem"), [{vals: T.map(r => r.peak_mem_gib), color: C.signal, name: "Peak memory"}], 10, [0, 2.5, 5, 7.5, 10], v => v.toFixed(1), TX, v => String(v), "number of frames (log scale)", true);
+
+/* ================================================================ tables */
+function table(caption, head, rows) {
+  const t = document.createElement("table"); const cap = document.createElement("caption"); cap.textContent = caption; t.appendChild(cap);
+  const th = document.createElement("thead"); th.innerHTML = "<tr>" + head.map(h => `<th scope="col">${h}</th>`).join("") + "</tr>"; t.appendChild(th);
+  const tb = document.createElement("tbody"); tb.innerHTML = rows.map(r => "<tr>" + r.map(c => typeof c === "object" ? `<td class="${c.cls || ""}">${c.v}</td>` : `<td>${c}</td>`).join("") + "</tr>").join(""); t.appendChild(tb);
+  const w = document.createElement("div"); w.className = "tbl"; w.appendChild(t); $("#tables").appendChild(w);
+}
+const f3 = v => v.toFixed(3), f2 = v => v.toFixed(2);
+table("Camera pose on 50 rendered scenes", ["Method", "Views", "AUC@30", "AUC@15", "AUC@5", "RRA@15", "RTA@15", "Median rot. err.", "Median transl. err.", "Failed pairs"],
+  VIEWS_S.flatMap(S => { const v = E[`vggt1b/S=${S}`], s = E[`sift_5pt_ransac_gtK/S=${S}`];
+    return [["SIFT + 5-pt RANSAC (true K)", S, f3(s["AUC@30"]), f3(s["AUC@15"]), f3(s["AUC@5"]), f3(s["RRA@15"]), f3(s["RTA@15"]), f2(s.median_rot_err_deg) + "°", s.median_trans_err_deg.toFixed(1) + "°", (s.failed_pairs * 100).toFixed(1) + " %"],
+      ["VGGT-1B", S, {v: f3(v["AUC@30"]), cls: "best"}, {v: f3(v["AUC@15"]), cls: "best"}, {v: f3(v["AUC@5"]), cls: "best"}, {v: f3(v["RRA@15"]), cls: "best"}, {v: f3(v["RTA@15"]), cls: "best"}, {v: f2(v.median_rot_err_deg) + "°", cls: "best"}, {v: v.median_trans_err_deg.toFixed(1) + "°", cls: "best"}, "0 %"]]; }));
+table("Depth, focal length and point maps (VGGT-1B)", ["Views", "Depth AbsRel", "δ < 1.25", "Focal rel. err.", "Point head", "Depth + camera", "s / scene"],
+  VIEWS_S.map(S => { const v = E[`vggt1b/S=${S}`]; return [S, f3(v.depth_AbsRel), f3(v["depth_delta<1.25"]), f3(v.focal_rel_err), {v: v.point_err_pointhead.toFixed(4), cls: "best"}, v["point_err_depth+cam"].toFixed(4), f2(v.sec_per_scene)]; }));
+const Q = RESULTS.equiv.outputs;
+table(`Re-implementation vs official code, released weights (${RESULTS.equiv.images} kitchen images, fp32, ${RESULTS.equiv.gpu})`, ["Output", "Max |difference|", "Max |value|"],
+  Object.entries(Q).map(([k, v]) => [`<span class="mono">${k}</span>`, {v: v.max_abs_diff.toFixed(1), cls: "best"}, v.max_abs_ref < 10 ? v.max_abs_ref.toFixed(3) : v.max_abs_ref.toFixed(1)]));
+const pill = (cls, t) => ({v: `<span class="pill ${cls}">${cls === "ok" ? "&#10003;" : cls === "no" ? "&#10007;" : "&#9675;"} ${t}</span>`});
+table("The paper's claims", ["Claim (paper)", "Result here", "Status"], [
+  ["Released model and architecture as described", {v: "Bit-identical outputs, all heads including tracking", cls: "wrap"}, pill("ok", "verified")],
+  ["Camera pose better than classical methods (Tables 1–2)", {v: "AUC@30 0.85 vs 0.47; median rotation 0.48° vs 2.87°; no failed pairs vs 8 %", cls: "wrap"}, pill("ok", "verified")],
+  ["Accurate multi-view depth (Table 4)", {v: "AbsRel 0.032–0.044 zero-shot on rendered scenes", cls: "wrap"}, pill("ok", "verified")],
+  ["More views help", {v: "Depth, points, focal length and AUC@5 improve from 2 to 8 views; AUC@30 saturates at 4", cls: "wrap"}, pill("ok", "verified")],
+  ["Fast feed-forward inference (Table 9)", {v: "0.4–2.9 s for 1–8 frames on a T4 (paper: H100)", cls: "wrap"}, pill("ok", "consistent")],
+  ["Depth + camera beats the point head (Table 3)", {v: "Point head 2–10 % better on these synthetic scenes", cls: "wrap"}, pill("no", "not reproduced here")],
+  ["Point tracking", {v: "Tracks follow scene points on the examples; no ground truth to score", cls: "wrap"}, pill("part", "qualitative")],
+]);
+</script>
+</body></html>

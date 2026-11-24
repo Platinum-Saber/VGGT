@@ -2,6 +2,7 @@
 
 - Paper: Wang et al., *VGGT: Visual Geometry Grounded Transformer*, CVPR 2025, https://arxiv.org/pdf/2503.11651
 - Official code: https://github.com/facebookresearch/vggt
+- Interactive walkthrough and results: https://platinum-saber.github.io/VGGT/ (source in `docs/`)
 
 This repository re-implements the original VGGT package **without modifications**: the same folder layout, class
 and function names, defaults and parameter names as `facebookresearch/vggt`, including the tracking head. Meta's
