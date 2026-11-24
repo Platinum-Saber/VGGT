@@ -84,7 +84,7 @@ h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:
 #gl2{width:100%;height:min(70vh,620px);display:block;background:var(--bg)}
 .controls{padding:16px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:14px;min-width:0}
 .seg{display:flex;flex-wrap:wrap;gap:6px}
-.seg button,.btn{font:500 12.5px var(--f-body);color:var(--ink-2);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:6px 10px;cursor:pointer}
+.seg button,.btn{font:500 15px var(--f-body);color:var(--ink-2);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:6px 10px;cursor:pointer}
 .seg button[aria-pressed="true"]{color:var(--ink);border-color:var(--signal);background:var(--signal-soft)}
 .controls label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-3)}
 .controls input[type=range]{width:100%;accent-color:var(--signal)}
@@ -95,24 +95,24 @@ h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 @media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
 .chart{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:16px 16px 10px;min-width:0;position:relative}
-.chart h3{font-size:16px;font-weight:600}
-.chart .sub{color:var(--ink-3);font-size:12.5px;margin:2px 0 8px}
+.chart h3{font-size:20px;font-weight:600}
+.chart .sub{color:var(--ink-3);font-size:16px;margin:2px 0 10px}
 .chart svg{width:100%;height:auto;display:block;overflow:visible}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin:4px 0 6px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.tip{position:fixed;pointer-events:none;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;font:12px/1.45 var(--f-body);color:var(--ink);z-index:20;opacity:0;transition:opacity .1s;max-width:240px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:16px;color:var(--ink-2);margin:4px 0 6px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;font:15px/1.45 var(--f-body);color:var(--ink);z-index:20;opacity:0;transition:opacity .1s;max-width:280px}
 .tip b{font-variant-numeric:tabular-nums}
 .tables{display:grid;gap:18px;margin-top:18px}
 .tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
-caption{text-align:left;padding:12px 14px 4px;font:600 15px var(--f-display);color:var(--ink)}
-th,td{padding:8px 14px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+table{border-collapse:collapse;width:100%;font-size:17px;font-variant-numeric:tabular-nums}
+caption{text-align:left;padding:14px 14px 6px;font:600 19px var(--f-display);color:var(--ink)}
+th,td{padding:10px 12px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
 th:first-child,td:first-child{text-align:left}
-thead th{color:var(--ink-3);font-weight:500;font-size:12px;border-top:0}
+thead th{color:var(--ink-3);font-weight:500;font-size:15px;border-top:0;white-space:normal;vertical-align:bottom}
 tbody tr:hover td{background:var(--panel-2)}
 td.best{color:var(--ink);font-weight:600}
-td.wrap{white-space:normal;text-align:left;min-width:220px}
-.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--f-body);padding:2px 9px;border-radius:999px;border:1px solid}
+td.wrap{white-space:normal;text-align:left;min-width:280px}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 15px var(--f-body);padding:2px 9px;border-radius:999px;border:1px solid}
 .pill.ok{color:var(--ok);border-color:#0ca30c66}
 .pill.part{color:var(--warn);border-color:#c9850066}
 .pill.no{color:var(--bad);border-color:#e6676766}
@@ -243,19 +243,19 @@ td.wrap{white-space:normal;text-align:left;min-width:220px}
      <button type="button" data-m="AUC@30" aria-pressed="true">AUC@30</button><button type="button" data-m="AUC@15" aria-pressed="false">AUC@15</button><button type="button" data-m="AUC@5" aria-pressed="false">AUC@5</button><button type="button" data-m="RRA@15" aria-pressed="false">RRA@15</button>
     </div>
     <div class="legend"><span><i style="background:var(--signal)"></i>VGGT-1B</span><span><i style="background:var(--sift)"></i>SIFT + 5-pt RANSAC (true K)</span></div>
-    <svg viewBox="0 0 520 250" id="sPose"></svg></div>
+    <svg viewBox="0 0 520 290" id="sPose"></svg></div>
    <div class="chart" id="cRot"><h3>Median rotation error</h3><div class="sub">Degrees, lower is better</div>
     <div class="legend"><span><i style="background:var(--signal)"></i>VGGT-1B</span><span><i style="background:var(--sift)"></i>SIFT + 5-pt RANSAC (true K)</span></div>
-    <svg viewBox="0 0 520 250" id="sRot"></svg></div>
+    <svg viewBox="0 0 520 290" id="sRot"></svg></div>
    <div class="chart" id="cPts"><h3>Point-map error vs number of views</h3><div class="sub">Mean distance after Sim(3) alignment, scene units (mean point distance 1)</div>
     <div class="legend"><span><i style="background:var(--signal)"></i>Point head</span><span><i style="background:var(--aux)"></i>Depth + predicted camera</span></div>
-    <svg viewBox="0 0 520 250" id="sPts"></svg></div>
+    <svg viewBox="0 0 520 290" id="sPts"></svg></div>
    <div class="chart" id="cDepth"><h3>Depth error vs number of views</h3><div class="sub">AbsRel after per-sequence median scaling</div>
-    <svg viewBox="0 0 520 250" id="sDepth"></svg></div>
+    <svg viewBox="0 0 520 290" id="sDepth"></svg></div>
    <div class="chart" id="cTime"><h3>Inference time</h3><div class="sub">Seconds per forward pass, fp16, 518 px wide, Tesla T4</div>
-    <svg viewBox="0 0 520 250" id="sTime"></svg></div>
+    <svg viewBox="0 0 520 290" id="sTime"></svg></div>
    <div class="chart" id="cMem"><h3>Peak GPU memory</h3><div class="sub">GiB, includes 4.7 GiB of fp32 weights</div>
-    <svg viewBox="0 0 520 250" id="sMem"></svg></div>
+    <svg viewBox="0 0 520 290" id="sMem"></svg></div>
   </div>
   <div class="tables" id="tables"></div>
  </div>
@@ -707,13 +707,13 @@ const tip = $("#tip");
 function showTip(ev, html) { tip.innerHTML = html; tip.style.opacity = 1; const x = Math.min(innerWidth - 250, ev.clientX + 14), y = ev.clientY + 14; tip.style.left = x + "px"; tip.style.top = y + "px"; }
 function hideTip() { tip.style.opacity = 0; }
 function svgEl(svg, tag, a, text) { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (text !== undefined) e.textContent = text; svg.appendChild(e); return e; }
-const AX = {l: 46, r: 12, t: 12, b: 34, W: 520, H: 250};
+const AX = {l: 66, r: 14, t: 24, b: 50, W: 520, H: 290};
 function axes(svg, yMax, ticks, fmt, xLabels, xTitle) {
   svg.innerHTML = ""; const ih = AX.H - AX.t - AX.b, iw = AX.W - AX.l - AX.r;
   ticks.forEach(v => { const y = AX.t + ih - v / yMax * ih;
     svgEl(svg, "line", {x1: AX.l, x2: AX.W - AX.r, y1: y, y2: y, stroke: C.line, "stroke-width": 1});
-    svgEl(svg, "text", {x: AX.l - 8, y: y + 4, "text-anchor": "end", fill: C.ink3, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(v)); });
-  if (xTitle) svgEl(svg, "text", {x: AX.l + iw / 2, y: AX.H - 2, "text-anchor": "middle", fill: C.ink3, "font-size": 11, "font-family": "Inter, sans-serif"}, xTitle);
+    svgEl(svg, "text", {x: AX.l - 10, y: y + 5, "text-anchor": "end", fill: C.ink3, "font-size": 15, "font-family": "JetBrains Mono, monospace"}, fmt(v)); });
+  if (xTitle) svgEl(svg, "text", {x: AX.l + iw / 2, y: AX.H - 2, "text-anchor": "middle", fill: C.ink3, "font-size": 15, "font-family": "Inter, sans-serif"}, xTitle);
   return {ih, iw, y: v => AX.t + ih - v / yMax * ih};
 }
 function rbar(x, y, w, h) { const r = Math.min(4, w / 2, h); return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`; }
@@ -722,11 +722,11 @@ function groupedBars(svg, metric, fmt, yMax, ticks, unit = "") {
   const gw = g.iw / 3, bw = Math.min(46, gw * 0.3);
   VIEWS_S.forEach((S, i) => {
     const cx = AX.l + gw * (i + 0.5);
-    svgEl(svg, "text", {x: cx, y: AX.H - AX.b + 16, "text-anchor": "middle", fill: C.ink2, "font-size": 12, "font-family": "JetBrains Mono, monospace"}, `S = ${S}`);
+    svgEl(svg, "text", {x: cx, y: AX.H - AX.b + 22, "text-anchor": "middle", fill: C.ink2, "font-size": 16, "font-family": "JetBrains Mono, monospace"}, `S = ${S}`);
     [["vggt1b", C.signal, "VGGT-1B", -1], ["sift_5pt_ransac_gtK", C.sift, "SIFT + RANSAC", 1]].forEach(([key, col, name, side]) => {
       const v = E[`${key}/S=${S}`][metric], x = cx + (side < 0 ? -bw - 1 : 1), y = g.y(v), h = AX.t + g.ih - y;
       const p = svgEl(svg, "path", {d: rbar(x, y, bw, Math.max(h, 0.5)), fill: col});
-      svgEl(svg, "text", {x: x + bw / 2, y: y - 5, "text-anchor": "middle", fill: C.ink2, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(v) + unit);
+      svgEl(svg, "text", {x: x + bw / 2, y: y - 7, "text-anchor": "middle", fill: C.ink2, "font-size": 15, "font-family": "JetBrains Mono, monospace"}, fmt(v) + unit);
       const hit = svgEl(svg, "rect", {x: x - 2, y: AX.t, width: bw + 4, height: g.ih, fill: "transparent"});
       hit.addEventListener("pointermove", e => showTip(e, `<b>${name}</b>, ${S} views<br>${metric}: <b>${fmt(v)}${unit}</b>`)); hit.addEventListener("pointerleave", hideTip);
     });
@@ -735,7 +735,7 @@ function groupedBars(svg, metric, fmt, yMax, ticks, unit = "") {
 function lines(svg, series, yMax, ticks, fmt, xs, xLabel, xTitle, logx = false) {
   const g = axes(svg, yMax, ticks, fmt, null, xTitle);
   const xpos = v => { const a = logx ? Math.log2(xs[0]) : xs[0], b = logx ? Math.log2(xs[xs.length - 1]) : xs[xs.length - 1], u = ((logx ? Math.log2(v) : v) - a) / (b - a); return AX.l + 24 + u * (g.iw - 48); };
-  xs.forEach(v => svgEl(svg, "text", {x: xpos(v), y: AX.H - AX.b + 16, "text-anchor": "middle", fill: C.ink2, "font-size": 12, "font-family": "JetBrains Mono, monospace"}, xLabel(v)));
+  xs.forEach(v => svgEl(svg, "text", {x: xpos(v), y: AX.H - AX.b + 22, "text-anchor": "middle", fill: C.ink2, "font-size": 16, "font-family": "JetBrains Mono, monospace"}, xLabel(v)));
   series.forEach(({vals, color, name}) => {
     const d = vals.map((v, i) => `${i ? "L" : "M"}${xpos(xs[i]).toFixed(1)},${g.y(v).toFixed(1)}`).join(" ");
     svgEl(svg, "path", {d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round"});
@@ -743,7 +743,8 @@ function lines(svg, series, yMax, ticks, fmt, xs, xLabel, xTitle, logx = false) 
       svgEl(svg, "circle", {cx, cy, r: 4.5, fill: color, stroke: C.panel, "stroke-width": 2});
       const hit = svgEl(svg, "circle", {cx, cy, r: 14, fill: "transparent"});
       hit.addEventListener("pointermove", e => showTip(e, `<b>${name}</b><br>${xLabel(xs[i])}: <b>${fmt(v)}</b>`)); hit.addEventListener("pointerleave", hideTip); });
-    const last = vals.length - 1; svgEl(svg, "text", {x: xpos(xs[last]) + 8, y: g.y(vals[last]) - 8, "text-anchor": "end", fill: C.ink2, "font-size": 11, "font-family": "JetBrains Mono, monospace"}, fmt(vals[last]));
+    const last = vals.length - 1, top = series.every(o => o.vals[o.vals.length - 1] <= vals[last]);
+    svgEl(svg, "text", {x: xpos(xs[last]) + 8, y: g.y(vals[last]) + (top ? -10 : 22), "text-anchor": "end", fill: C.ink2, "font-size": 15, "font-family": "JetBrains Mono, monospace"}, fmt(vals[last]));
   });
 }
 let poseMetric = "AUC@30";
