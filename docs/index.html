@@ -685,7 +685,7 @@ function applyEx() {
   u.thr.value = 1 - keep; u.size.value = (ex.S.fit ? ex.S.fit.size : 3) * 0.0016 * size; ex.cams.visible = $("#cams2").checked;
   $("#conf2v").textContent = `${Math.round(keep * 100)} %`; $("#size2v").textContent = size;
 }
-let wanted = null;
+var wanted = null;  // var: showScene is first called above this line
 function showScene(name) {
   wanted = name;
   document.querySelectorAll("#sceneSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.s === name)));
