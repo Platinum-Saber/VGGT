@@ -537,10 +537,13 @@ const draws = [
 
 /* ================================================================ WebGL (story stage + explorer) */
 let camData = null;
-fetch("data/kitchen_cams.json").then(r => r.json()).then(d => camData = d).catch(() => {});
+fetch("data/kitchen_cams.json?v=3").then(r => r.json()).then(d => camData = d).catch(() => {});
 const sceneCache = {};
 function loadScene(name) {
-  if (!sceneCache[name]) sceneCache[name] = fetch(`data/scene_${name}.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(decodeScene);
+  // ?v= bypasses a stale cached 404; a failed load is dropped from the cache so the next click retries
+  if (!sceneCache[name]) sceneCache[name] = fetch(`data/scene_${name}.json?v=3`, {cache: "no-cache"})
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(decodeScene)
+    .catch(e => { delete sceneCache[name]; throw e; });
   return sceneCache[name];
 }
 function b64(s, T) { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new T(u.buffer); }
@@ -682,14 +685,17 @@ function applyEx() {
   u.thr.value = 1 - keep; u.size.value = (ex.S.fit ? ex.S.fit.size : 3) * 0.0016 * size; ex.cams.visible = $("#cams2").checked;
   $("#conf2v").textContent = `${Math.round(keep * 100)} %`; $("#size2v").textContent = size;
 }
+let wanted = null;
 function showScene(name) {
+  wanted = name;
   document.querySelectorAll("#sceneSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.s === name)));
   $("#meta2").textContent = `Loading ${name.replace("llff_", "")}…`;
   loadScene(name).then(S => {
+    if (name !== wanted) return;  // a newer choice was made while this one loaded
     world2.clear(); const pts = makePoints(S), cams = makeCams(S, S.fit ? S.fit.size : 3); world2.add(pts, cams); ex = {S, pts, cams};
     applyEx(); fitView();
     $("#meta2").innerHTML = `${S.cams.length} images · ${S.n.toLocaleString()} points shown<br>${S.H}×${S.W} px input · first camera in yellow`;
-  }).catch(() => { $("#meta2").textContent = "Could not load this scene's data file."; });
+  }).catch(() => { if (name === wanted) $("#meta2").textContent = "Could not load this scene's data file. Click the scene again to retry."; });
 }
 $("#sceneSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (b) showScene(b.dataset.s); });
 ["conf2", "size2", "cams2"].forEach(id => $("#" + id).addEventListener("input", applyEx));
