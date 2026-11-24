@@ -46,8 +46,8 @@ h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:
 .stat b em{font-style:normal;color:var(--ink-3);font-size:18px}
 @media (max-width:760px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat:nth-child(3){border-left:0}.stat:nth-child(n+3){border-top:1px solid var(--line)}}
 /* ---------------------------------------------------------------- story */
-.story{position:relative;border-bottom:1px solid var(--line);display:grid;grid-template-columns:38% 62%}
-.stage{position:sticky;top:env(safe-area-inset-top,0px);height:100vh;height:100dvh;display:grid;grid-template-rows:42% 58%;
+.story{position:relative;border-bottom:1px solid var(--line);display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr)}
+.stage{position:sticky;top:env(safe-area-inset-top,0px);height:100vh;height:100dvh;display:grid;grid-template-rows:54% 46%;
   border-left:1px solid var(--line);background:var(--bg);grid-column:2;grid-row:1;align-self:start;min-width:0}
 .arch-box{position:relative;border-bottom:1px solid var(--line);overflow:hidden}
 #arch{width:100%;height:100%;display:block}
@@ -61,8 +61,8 @@ h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:
 .inset img{display:block;width:100%}
 .inset span{position:absolute;left:8px;top:6px;font:500 11px var(--f-mono);color:var(--ink);background:#0c1014cc;padding:1px 6px;border-radius:3px}
 .steps{grid-column:1;grid-row:1;min-width:0}
-.step{height:100vh;height:100dvh;display:flex;align-items:center;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:22px}
-.card{max-width:440px;min-width:0;flex:1}
+.step{height:100vh;height:100dvh;display:flex;align-items:center;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:20px}
+.card{max-width:390px;min-width:0;flex:1}
 .card .eyebrow{color:var(--signal)}
 .card h2{font-size:28px;line-height:1.15;margin:8px 0 12px}
 .card p{color:var(--ink-2);margin:0 0 10px}
