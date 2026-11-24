@@ -166,7 +166,7 @@ td.wrap{white-space:normal;text-align:left;min-width:280px}
  <div class="steps" id="steps">
   <div class="step"><div class="card"><div class="eyebrow">The whole network</div><h2>Photos in, geometry out</h2>
    <p>VGGT takes S images of a scene and predicts, for every frame, its camera, a depth map, a point map in the first camera's coordinates and the motion of query points. There is no optimisation loop: one forward pass of a 1.26 B-parameter transformer.</p>
-   <p>Scroll to zoom into each part. The numbers on the diagram are the phases of the code walkthrough.</p></div></div>
+</div></div>
   <div class="step"><div class="card"><div class="eyebrow">Phase 1 &middot; inputs</div><h2>Sanitising the images</h2>
    <p><span class="mono">load_and_preprocess_images</span> resizes every photo to width 518 and rounds the height to a multiple of the 14 px patch size, centre-cropping anything taller than 518. RGBA images are composited on white.</p>
    <p>Inside the model each channel is standardised with the ImageNet statistics DINOv2 was trained on, and the S frames are folded into the batch.</p>
