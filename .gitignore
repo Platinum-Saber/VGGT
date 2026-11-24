@@ -1,8 +1,8 @@
 __pycache__/
 *.pyc
-data/
+/data/
 runs/*/model.pt
-runs/
+/runs/
 report/*.aux
 report/*.log
 report/*.toc
